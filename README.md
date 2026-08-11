@@ -24,16 +24,16 @@
    (если интерактивный `pnpm inject` не работает — выполните `node scripts/runInstaller.mjs -- --install -branch stable`)
 3. Перезапустите Discord (полностью, через трей → Quit).
 
-## Установка у друга (быстро, без ручных шагов)
+## Быстая установка
 
-Другу достаточно:
+Достаточно:
 
 1. Установить [Git](https://git-scm.com/download/win), [Node.js LTS](https://nodejs.org) и pnpm (`npm i -g pnpm`).
 2. Скачать этот репозиторий (Code → Download ZIP) и распаковать.
 3. Запустить **двойным кликом** `install.bat` и дождаться завершения (само соберёт Vencord и установит плагин).
 4. Полностью перезапустить Discord (трей → Quit) и включить плагин.
 
-Дальше в настройках плагина (Discord → Vencord → Plugins → supportka) друг должен включить **«Отправлять команды»** и убедиться, что `relayChannelId` совпадает с твоим.
+В настройках плагина нужно нажать выполнение команд
 
 ## Настройка
 
@@ -57,7 +57,3 @@
 ```json
 {"type":"vc-supportka","action":"boy|girl|mute|unmute|reject","user":"<ID>","guild":"<ID>","reason":"<причина>"}
 ```
-
-## Лицензия
-
-GPL-3.0-or-later
