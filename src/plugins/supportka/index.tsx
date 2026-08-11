@@ -12,7 +12,7 @@ import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
 import { classNameFactory } from "@utils/css";
-import { fetchUserProfile, sendMessage } from "@utils/discord";
+import { fetchUserProfile } from "@utils/discord";
 import { useAwaiter } from "@utils/react";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
@@ -21,14 +21,15 @@ import { KeyboardEvent } from "react";
 
 import { runCheck } from "./check";
 
-const BOY_CHANNEL = "852418390618275891";
-const GIRL_FIRST_CHANNEL = "853603250443780116";
-const GIRL_SECOND_CHANNEL = "852418390618275891";
-const REJECT_CHANNEL = "852418435031498752";
+const DEFAULT_BOY_CHANNEL = "852418390618275891";
+const DEFAULT_GIRL_CHANNEL = "853603250443780116";
+const DEFAULT_REJECT_CHANNEL = "852418435031498752";
 
 const COMMAND_TYPE = "vc-supportka";
 
 const ACCEPTED_KEY = "vc-supportka-status";
+const CHANNEL_CACHE_KEY = "vc-supportka-channels";
+const LAST_PROCESSED_KEY = "vc-supportka-last-processed";
 
 interface StatusEntry {
     name?: string;
@@ -57,6 +58,30 @@ const settings = definePluginSettings({
         type: OptionType.STRING,
         description: "Канал, в который отправляются команды (релей-канал)",
         default: "1535964031276294235"
+    },
+    relayGuildId: {
+        type: OptionType.STRING,
+        displayName: "Сервер релея",
+        description: "Сервер, в котором создаются каналы «мальчик/девочка/отказ», если их не нашли автоматически",
+        default: "1535963962053632120"
+    },
+    boyChannelId: {
+        type: OptionType.STRING,
+        displayName: "Канал «Мальчик»",
+        description: "Канал, куда отправляется сообщение при нажатии Мальчик. Если канала нет — создастся автоматически.",
+        default: DEFAULT_BOY_CHANNEL
+    },
+    girlChannelId: {
+        type: OptionType.STRING,
+        displayName: "Канал «Девочка»",
+        description: "Канал, куда отправляется сообщение при нажатии Девочка. Если канала нет — создастся автоматически.",
+        default: DEFAULT_GIRL_CHANNEL
+    },
+    rejectChannelId: {
+        type: OptionType.STRING,
+        displayName: "Канал «Отказ»",
+        description: "Канал, куда отправляется сообщение при нажатии Отказ. Если канала нет — создастся автоматически.",
+        default: DEFAULT_REJECT_CHANNEL
     },
     controllerId: {
         type: OptionType.STRING,
@@ -116,28 +141,94 @@ const settings = definePluginSettings({
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 function setServerMute(guildId: string, userId: string, mute: boolean) {
+    if (userId === UserStore.getCurrentUser().id) {
+        showToast("Нельзя замьютить/размьютить самого себя", Toasts.Type.FAILURE);
+        return;
+    }
     RestAPI.patch({
         url: `/guilds/${guildId}/members/${userId}`,
         body: { mute }
     })
         .then(() => showToast(mute ? "Пользователь замьючен" : "Пользователь размьючен", Toasts.Type.SUCCESS))
-        .catch(() => showToast("Не удалось изменить мьют (нет прав или пользователь не в голосовом канале)", Toasts.Type.FAILURE));
+        .catch(err => showToast(`Не удалось изменить мьют (${err?.response?.status ?? err?.message ?? "нет прав"})`, Toasts.Type.FAILURE));
 }
 
-function sendBoy(userId: string) {
-    sendMessage(BOY_CHANNEL, { content: userId });
+async function sendRawMessage(channelId: string, content: string) {
+    await RestAPI.post({ url: `/channels/${channelId}/messages`, body: { content } });
+}
+
+type TargetChannel = "boy" | "girl" | "reject";
+
+const CHANNEL_NAMES: Record<TargetChannel, string> = {
+    boy: "мальчик",
+    girl: "девочка",
+    reject: "отказ"
+};
+
+function configuredChannelId(type: TargetChannel): string {
+    switch (type) {
+        case "boy": return settings.store.boyChannelId;
+        case "girl": return settings.store.girlChannelId;
+        case "reject": return settings.store.rejectChannelId;
+    }
+}
+
+async function resolveTargetChannel(type: TargetChannel): Promise<string | null> {
+    const cache = (await DataStore.get<Record<string, string>>(CHANNEL_CACHE_KEY)) ?? {};
+    if (cache[type]) return cache[type];
+
+    const configured = configuredChannelId(type);
+    try {
+        await RestAPI.get({ url: `/channels/${configured}` });
+        return configured;
+    } catch {
+        // канала нет или нет доступа — пробуем создать
+    }
+
+    try {
+        const { body } = await RestAPI.post({
+            url: `/guilds/${settings.store.relayGuildId}/channels`,
+            body: { name: CHANNEL_NAMES[type], type: 0 }
+        });
+        cache[type] = body.id;
+        await DataStore.set(CHANNEL_CACHE_KEY, cache);
+        showToast(`Сапортка: канал «${CHANNEL_NAMES[type]}» создан автоматически`, Toasts.Type.SUCCESS);
+        return body.id;
+    } catch {
+        return null;
+    }
+}
+
+async function sendBoy(userId: string) {
+    const channel = await resolveTargetChannel("boy");
+    if (!channel) {
+        showToast("Сапортка: канал «мальчик» недоступен — не удалось создать (нет прав?)", Toasts.Type.FAILURE);
+        return;
+    }
+    await sendRawMessage(channel, userId);
     showToast("Отправлено: Мальчик", Toasts.Type.SUCCESS);
 }
 
 async function sendGirl(userId: string) {
-    await sendMessage(GIRL_FIRST_CHANNEL, { content: userId });
+    const girlChannel = await resolveTargetChannel("girl");
+    const boyChannel = await resolveTargetChannel("boy");
+    if (!girlChannel || !boyChannel) {
+        showToast("Сапортка: каналы «девочка»/«мальчик» недоступны", Toasts.Type.FAILURE);
+        return;
+    }
+    await sendRawMessage(girlChannel, userId);
     await wait(250);
-    await sendMessage(GIRL_SECOND_CHANNEL, { content: userId });
+    await sendRawMessage(boyChannel, userId);
     showToast("Отправлено: Девочка", Toasts.Type.SUCCESS);
 }
 
-function sendReject(userId: string, reason: string) {
-    sendMessage(REJECT_CHANNEL, { content: `${userId} ${reason}` });
+async function sendReject(userId: string, reason: string) {
+    const channel = await resolveTargetChannel("reject");
+    if (!channel) {
+        showToast("Сапортка: канал «отказ» недоступен — не удалось создать (нет прав?)", Toasts.Type.FAILURE);
+        return;
+    }
+    await sendRawMessage(channel, `${userId} ${reason}`);
     showToast("Отправлено: Отказ", Toasts.Type.SUCCESS);
 }
 
@@ -161,7 +252,7 @@ function buildCommand(action: SupportCommand["action"], userId: string, guildId:
 
 async function sendCommand(action: SupportCommand["action"], userId: string, guildId: string, reason?: string) {
     try {
-        await sendMessage(settings.store.relayChannelId, { content: buildCommand(action, userId, guildId, reason) });
+        await sendRawMessage(settings.store.relayChannelId, buildCommand(action, userId, guildId, reason));
         showToast("Команда отправлена Brqden_", Toasts.Type.SUCCESS);
     } catch {
         showToast("Не удалось отправить команду (нет доступа к релей-каналу?)", Toasts.Type.FAILURE);
@@ -172,11 +263,11 @@ function executeCommand(command: SupportCommand) {
     switch (command.action) {
         case "boy":
             if (settings.store.markAccepted) void setStatus(command.user, { status: "accepted", action: "boy", time: Date.now() });
-            sendBoy(command.user);
+            void sendBoy(command.user);
             break;
         case "girl":
             if (settings.store.markAccepted) void setStatus(command.user, { status: "accepted", action: "girl", time: Date.now() });
-            sendGirl(command.user);
+            void sendGirl(command.user);
             break;
         case "mute":
             if (command.guild) setServerMute(command.guild, command.user, command.action === "mute");
@@ -184,10 +275,80 @@ function executeCommand(command: SupportCommand) {
         case "reject":
             if (command.reason) {
                 if (settings.store.markAccepted) void setStatus(command.user, { status: "rejected", reason: command.reason, time: Date.now() });
-                sendReject(command.user, command.reason);
+                void sendReject(command.user, command.reason);
             }
             break;
     }
+}
+
+let pollTimer: number | undefined;
+let lastProcessed: Record<string, string> = {};
+
+async function loadLastProcessed() {
+    lastProcessed = (await DataStore.get<Record<string, string>>(LAST_PROCESSED_KEY)) ?? {};
+}
+
+function isAlreadyProcessed(channelId: string, messageId?: string) {
+    if (!messageId) return false;
+    const last = lastProcessed[channelId];
+    return Boolean(last && messageId <= last);
+}
+
+function markProcessed(channelId: string, messageId?: string) {
+    if (!messageId) return;
+    lastProcessed[channelId] = messageId;
+    void DataStore.set(LAST_PROCESSED_KEY, lastProcessed);
+}
+
+function handleRelayMessage(message: { id?: string; channel_id?: string; content?: string; author?: { id?: string; }; }) {
+    if (message.channel_id !== settings.store.relayChannelId) return;
+    if (!message.content?.startsWith(`{"type":"${COMMAND_TYPE}"`)) return;
+    if (isAlreadyProcessed(message.channel_id, message.id)) return;
+    markProcessed(message.channel_id, message.id);
+
+    if (message.author?.id === UserStore.getCurrentUser().id) return;
+
+    if (!settings.store.executeCommands) {
+        showToast("Сапортка: получена команда, но «Выполнять команды» выключено", Toasts.Type.FAILURE);
+        return;
+    }
+    if (message.author?.id !== settings.store.controllerId) {
+        showToast(`Сапортка: команда от неизвестного (${message.author?.id}), ожидался ${settings.store.controllerId}`, Toasts.Type.FAILURE);
+        return;
+    }
+
+    let command: SupportCommand;
+    try {
+        command = JSON.parse(message.content);
+    } catch {
+        showToast("Сапортка: не удалось разобрать команду", Toasts.Type.FAILURE);
+        return;
+    }
+
+    if (command?.type !== COMMAND_TYPE || !command.action || !command.user) {
+        showToast("Сапортка: неверный формат команды", Toasts.Type.FAILURE);
+        return;
+    }
+
+    executeCommand(command);
+}
+
+async function pollRelay() {
+    if (!settings.store.executeCommands) return;
+    try {
+        const { body } = await RestAPI.get({
+            url: `/channels/${settings.store.relayChannelId}/messages?limit=10`
+        });
+        for (const message of body) handleRelayMessage(message);
+    } catch {
+        // релей-канал недоступен — ничего не делаем
+    }
+}
+
+function startPolling() {
+    void loadLastProcessed();
+    void pollRelay();
+    pollTimer = window.setInterval(() => void pollRelay(), 5000);
 }
 
 function openRejectModal(userId: string, guildId: string, controller: boolean, name?: string) {
@@ -209,9 +370,9 @@ function RejectModal({ modalProps, userId, guildId, controller, name }: { modalP
     function onConfirm() {
         if (!trimmed) return;
         if (controller) {
-            sendCommand("reject", userId, guildId, trimmed);
+            void sendCommand("reject", userId, guildId, trimmed);
         } else {
-            sendReject(userId, trimmed);
+            void sendReject(userId, trimmed);
         }
         if (settings.store.markAccepted) void setStatus(userId, { status: "rejected", reason: trimmed, name, time: Date.now() });
         modalProps.onClose();
@@ -294,18 +455,18 @@ const SupportkaButtons = ErrorBoundary.wrap(
         const onBoy = () => {
             if (settings.store.markAccepted) void setStatus(user.id, { status: "accepted", action: "boy", name: user.globalName ?? user.username, time: Date.now() });
             if (controller) {
-                sendCommand("boy", user.id, guildId);
+                void sendCommand("boy", user.id, guildId);
             } else {
-                sendBoy(user.id);
+                void sendBoy(user.id);
             }
         };
 
         const onGirl = () => {
             if (settings.store.markAccepted) void setStatus(user.id, { status: "accepted", action: "girl", name: user.globalName ?? user.username, time: Date.now() });
             if (controller) {
-                sendCommand("girl", user.id, guildId);
+                void sendCommand("girl", user.id, guildId);
             } else {
-                sendGirl(user.id);
+                void sendGirl(user.id);
             }
         };
 
@@ -510,39 +671,17 @@ export default definePlugin({
     }],
     settings,
 
+    start() {
+        startPolling();
+    },
+    stop() {
+        if (pollTimer) window.clearInterval(pollTimer);
+        pollTimer = undefined;
+    },
+
     flux: {
         MESSAGE_CREATE({ message }: { message: Message; }) {
-            const isCommand = message.content?.startsWith(`{"type":"${COMMAND_TYPE}"`);
-            if (message.channel_id !== settings.store.relayChannelId) return;
-            if (!isCommand) return;
-
-            if (!settings.store.executeCommands) {
-                showToast("Сапортка: получена команда, но «Выполнять команды» выключено", Toasts.Type.FAILURE);
-                return;
-            }
-            if (message.author.id === UserStore.getCurrentUser().id) {
-                showToast("Сапортка: это команда от тебя самого — не выполняю", Toasts.Type.FAILURE);
-                return;
-            }
-            if (message.author.id !== settings.store.controllerId) {
-                showToast(`Сапортка: команда от неизвестного (${message.author.id}), ожидался ${settings.store.controllerId}`, Toasts.Type.FAILURE);
-                return;
-            }
-
-            let command: SupportCommand;
-            try {
-                command = JSON.parse(message.content);
-            } catch {
-                showToast("Сапортка: не удалось разобрать команду", Toasts.Type.FAILURE);
-                return;
-            }
-
-            if (command?.type !== COMMAND_TYPE || !command.action || !command.user) {
-                showToast("Сапортка: неверный формат команды", Toasts.Type.FAILURE);
-                return;
-            }
-
-            executeCommand(command);
+            handleRelayMessage(message);
         }
     },
 
