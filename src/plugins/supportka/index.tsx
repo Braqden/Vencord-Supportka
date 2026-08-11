@@ -896,31 +896,38 @@ function ensureMemoButton() {
     requestAnimationFrame(() => placeMemoButtonBetween(btn, help, inbox));
 }
 
-// Если контейнер Discord не раскладывает вставленную кнопку по порядку (наложение на «Помощь»),
-// вручную позиционируем её в зазор между «Почтой» и «Помощью».
+// Подгоняем кнопку «Памятка» под размер и положение соседних кнопок («Почта»/«Помощь»),
+// чтобы все три стояли ровно в одну линию.
 function placeMemoButtonBetween(btn: HTMLButtonElement, help: HTMLElement | null, inbox: HTMLElement | null) {
-    if (!btn.isConnected) return;
-    if (!help?.isConnected || !inbox?.isConnected) return;
+    if (!btn?.isConnected) return;
+    const ref = inbox?.isConnected ? inbox : (help?.isConnected ? help : null);
+    const other = help?.isConnected ? help : (inbox?.isConnected ? inbox : null);
+    if (!ref || !other || other === ref) return;
+
     const br = btn.getBoundingClientRect();
-    const hr = help.getBoundingClientRect();
-    const ir = inbox.getBoundingClientRect();
-    const flows = br.right <= hr.left + 2 && br.left >= ir.right - 2;
+    const rr = ref.getBoundingClientRect();
+    const or = other.getBoundingClientRect();
+    const flows = br.right <= or.left + 2 && br.left >= rr.right - 2;
+
+    // Размер — точно как у соседней кнопки, чтобы стоять с ней вровень.
+    btn.style.height = `${rr.height}px`;
+    btn.style.width = `${rr.width}px`;
+    btn.style.margin = "0";
+
     if (flows) {
         btn.style.position = "";
         btn.style.left = "";
         btn.style.top = "";
-        btn.style.height = "";
-        btn.style.margin = "";
         btn.style.zIndex = "";
         return;
     }
-    const gap = hr.left - ir.right;
-    if (gap < br.width + 8) return;
+
+    // Контейнер Discord не разложил кнопку по порядку — фиксируем её в зазоре между кнопками.
+    const gap = or.left - rr.right;
+    if (gap < rr.width + 8) return;
     btn.style.position = "fixed";
-    btn.style.left = `${ir.right + (gap - br.width) / 2}px`;
-    btn.style.top = `${ir.top}px`;
-    btn.style.height = `${ir.height}px`;
-    btn.style.margin = "0";
+    btn.style.left = `${rr.right + (gap - rr.width) / 2}px`;
+    btn.style.top = `${rr.top}px`;
     btn.style.zIndex = "100001";
 }
 
