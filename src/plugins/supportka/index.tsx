@@ -816,7 +816,7 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
             <div className={cl("memo-header")} onMouseDown={onHeaderDown}>
                 <span className={cl("memo-title")}>
                     <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
-                    Памятка
+                    Памятка саппорта
                 </span>
                 <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={onClose}>
                     <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
@@ -885,11 +885,51 @@ function ensureMemoButton() {
             openMemoWindow();
         }
     });
-    anchor.parentElement.insertBefore(btn, anchor);
+    // Порядок: Почта -> Памятка -> Помощь. Вставляем сразу после «Почты» (если найдена),
+    // иначе — перед «Помощью».
+    if (inbox?.parentElement) {
+        inbox.parentElement.insertBefore(btn, inbox.nextSibling);
+    } else {
+        anchor.parentElement.insertBefore(btn, anchor);
+    }
     memoTitleButton = btn;
+    requestAnimationFrame(() => placeMemoButtonBetween(btn, help, inbox));
 }
 
-const scheduleMemoButton = debounce(() => ensureMemoButton(), 300);
+// Если контейнер Discord не раскладывает вставленную кнопку по порядку (наложение на «Помощь»),
+// вручную позиционируем её в зазор между «Почтой» и «Помощью».
+function placeMemoButtonBetween(btn: HTMLButtonElement, help: HTMLElement | null, inbox: HTMLElement | null) {
+    if (!btn.isConnected) return;
+    if (!help?.isConnected || !inbox?.isConnected) return;
+    const br = btn.getBoundingClientRect();
+    const hr = help.getBoundingClientRect();
+    const ir = inbox.getBoundingClientRect();
+    const flows = br.right <= hr.left + 2 && br.left >= ir.right - 2;
+    if (flows) {
+        btn.style.position = "";
+        btn.style.left = "";
+        btn.style.top = "";
+        btn.style.height = "";
+        btn.style.margin = "";
+        btn.style.zIndex = "";
+        return;
+    }
+    const gap = hr.left - ir.right;
+    if (gap < br.width + 8) return;
+    btn.style.position = "fixed";
+    btn.style.left = `${ir.right + (gap - br.width) / 2}px`;
+    btn.style.top = `${ir.top}px`;
+    btn.style.height = `${ir.height}px`;
+    btn.style.margin = "0";
+    btn.style.zIndex = "100001";
+}
+
+const scheduleMemoButton = debounce(() => {
+    ensureMemoButton();
+    if (memoTitleButton?.isConnected) {
+        placeMemoButtonBetween(memoTitleButton, findLabeledButton(HELP_LABELS), findLabeledButton(INBOX_LABELS));
+    }
+}, 300);
 
 function startMemoButton() {
     ensureMemoButton();
