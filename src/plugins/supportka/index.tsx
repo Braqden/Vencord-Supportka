@@ -270,6 +270,7 @@ function executeCommand(command: SupportCommand) {
             void sendGirl(command.user);
             break;
         case "mute":
+        case "unmute":
             if (command.guild) setServerMute(command.guild, command.user, command.action === "mute");
             break;
         case "reject":
