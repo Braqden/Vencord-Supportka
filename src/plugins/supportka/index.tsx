@@ -11,15 +11,18 @@ import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
+import { debounce } from "@shared/debounce";
 import { classNameFactory } from "@utils/css";
 import { fetchUserProfile } from "@utils/discord";
 import { useAwaiter } from "@utils/react";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
-import { Forms, GuildMemberStore, Modal, openModal, PresenceStore, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, UserProfileStore, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
-import { KeyboardEvent } from "react";
+import { createRoot, Forms, GuildMemberStore, Modal, openModal, PresenceStore, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, UserProfileStore, UserStore, useEffect, useRef, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
+import { KeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import type { Root } from "react-dom/client";
 
 import { runCheck } from "./check";
+import { DEFAULT_MEMO } from "./memo";
 
 const DEFAULT_BOY_CHANNEL = "852418390618275891";
 const DEFAULT_GIRL_CHANNEL = "853603250443780116";
@@ -135,6 +138,19 @@ const settings = definePluginSettings({
         displayName: "Ссылки для удаления",
         description: "Доп. домены ссылок, которые нужно убрать полностью (красный). Разделяются ;",
         default: ""
+    },
+    showMemoButton: {
+        type: OptionType.BOOLEAN,
+        displayName: "Кнопка «Памятка»",
+        description: "Показывать кнопку «Памятка» в верхней панели Discord (между «Почтой» и «Помощью»).",
+        default: true
+    },
+    memoContent: {
+        type: OptionType.STRING,
+        multiline: true,
+        displayName: "Текст памятки",
+        description: "Содержимое памятки. Формат строк: ## заголовок, ### подзаголовок, - пункт, 1. нумерованный пункт, > заметка, --- разделитель, **жирный**, `код`.",
+        default: DEFAULT_MEMO
     }
 });
 
@@ -660,6 +676,235 @@ const SupportkaCheck = ErrorBoundary.wrap(
     { noop: true }
 );
 
+// --- Памятка: плавающее перетаскиваемое окно ---
+
+interface MemoPos {
+    x: number;
+    y: number;
+}
+
+const MEMO_POS_KEY = "vc-supportka-memo-pos";
+
+const MEMO_ICON_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h4"/></svg>';
+
+const CLOSE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+const INLINE_RE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*|__([^_]+)__|~~([^~]+)~~/g;
+
+function renderInline(text: string): JSX.Element {
+    const parts: JSX.Element[] = [];
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let key = 0;
+    const re = new RegExp(INLINE_RE);
+    while ((m = re.exec(text))) {
+        if (m.index > last) parts.push(<span key={key++}>{text.slice(last, m.index)}</span>);
+        const [full, code, linkText, linkUrl, bold, italic, underline, strike] = m;
+        if (code !== undefined) {
+            parts.push(<code key={key++}>{code}</code>);
+        } else if (linkText !== undefined) {
+            parts.push(<a key={key++} href={linkUrl} target="_blank" rel="noreferrer noopener">{renderInline(linkText)}</a>);
+        } else if (bold !== undefined) {
+            parts.push(<strong key={key++}>{renderInline(bold)}</strong>);
+        } else if (italic !== undefined) {
+            parts.push(<em key={key++}>{renderInline(italic)}</em>);
+        } else if (underline !== undefined) {
+            parts.push(<u key={key++}>{renderInline(underline)}</u>);
+        } else if (strike !== undefined) {
+            parts.push(<s key={key++}>{renderInline(strike)}</s>);
+        }
+        last = m.index + full.length;
+    }
+    if (last < text.length) parts.push(<span key={key++}>{text.slice(last)}</span>);
+    return <>{parts}</>;
+}
+
+function MemoBody({ content }: { content: string }) {
+    const nodes: JSX.Element[] = [];
+    content.split("\n").forEach((raw, i) => {
+        const line = raw.replace(/\r$/, "");
+        if (!line.trim()) {
+            nodes.push(<div key={i} className={cl("memo-gap")} />);
+            return;
+        }
+        if (line.startsWith("#### ")) {
+            nodes.push(<h5 key={i} className={cl("memo-h5")}>{renderInline(line.slice(5))}</h5>);
+            return;
+        }
+        if (line.startsWith("### ")) {
+            nodes.push(<h4 key={i} className={cl("memo-h4")}>{renderInline(line.slice(4))}</h4>);
+            return;
+        }
+        if (line.startsWith("## ")) {
+            nodes.push(<h3 key={i} className={cl("memo-h3")}>{renderInline(line.slice(3))}</h3>);
+            return;
+        }
+        if (line.startsWith("# ")) {
+            nodes.push(<h2 key={i} className={cl("memo-h2")}>{renderInline(line.slice(2))}</h2>);
+            return;
+        }
+        if (line.startsWith("- ")) {
+            nodes.push(<div key={i} className={cl("memo-li")}><span className={cl("memo-bullet")}>•</span>{renderInline(line.slice(2))}</div>);
+            return;
+        }
+        const num = line.match(/^(\d+)\.\s+(.*)$/);
+        if (num) {
+            nodes.push(<div key={i} className={cl("memo-li")}><span className={cl("memo-bullet")}>{num[1]}.</span>{renderInline(num[2])}</div>);
+            return;
+        }
+        if (line.startsWith("> ")) {
+            nodes.push(<div key={i} className={cl("memo-note")}>{renderInline(line.slice(2))}</div>);
+            return;
+        }
+        if (line.trim() === "---") {
+            nodes.push(<hr key={i} className={cl("memo-hr")} />);
+            return;
+        }
+        nodes.push(<p key={i} className={cl("memo-p")}>{renderInline(line)}</p>);
+    });
+    return <>{nodes}</>;
+}
+
+function MemoWindow({ onClose }: { onClose: () => void }) {
+    const [pos, setPos] = useState<MemoPos>({ x: 24, y: 110 });
+    const posRef = useRef(pos);
+    const drag = useRef<{ sx: number; sy: number; bx: number; by: number; } | null>(null);
+    const winRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        posRef.current = pos;
+    }, [pos]);
+
+    useEffect(() => {
+        void DataStore.get<MemoPos>(MEMO_POS_KEY).then(p => {
+            if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+            const w = winRef.current?.offsetWidth ?? 400;
+            const h = winRef.current?.offsetHeight ?? 500;
+            setPos({
+                x: Math.max(8, Math.min(window.innerWidth - w - 8, p.x)),
+                y: Math.max(48, Math.min(window.innerHeight - h - 8, p.y))
+            });
+        });
+    }, []);
+
+    const onHeaderDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return;
+        drag.current = { sx: e.clientX, sy: e.clientY, bx: posRef.current.x, by: posRef.current.y };
+        const onMove = (ev: MouseEvent) => {
+            if (!drag.current) return;
+            const w = winRef.current?.offsetWidth ?? 400;
+            const h = winRef.current?.offsetHeight ?? 500;
+            setPos({
+                x: Math.max(8, Math.min(window.innerWidth - w - 8, drag.current.bx + ev.clientX - drag.current.sx)),
+                y: Math.max(48, Math.min(window.innerHeight - h - 8, drag.current.by + ev.clientY - drag.current.sy))
+            });
+        };
+        const onUp = () => {
+            if (drag.current) void DataStore.set(MEMO_POS_KEY, posRef.current);
+            drag.current = null;
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+    };
+
+    const content = settings.store.memoContent || DEFAULT_MEMO;
+
+    return (
+        <div ref={winRef} className={cl("memo-window")} style={{ left: pos.x, top: pos.y }}>
+            <div className={cl("memo-header")} onMouseDown={onHeaderDown}>
+                <span className={cl("memo-title")}>
+                    <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
+                    Памятка
+                </span>
+                <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={onClose}>
+                    <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
+                </button>
+            </div>
+            <div className={cl("memo-body")}>
+                <MemoBody content={content} />
+            </div>
+        </div>
+    );
+}
+
+let memoRoot: Root | null = null;
+let memoContainer: HTMLDivElement | null = null;
+
+function openMemoWindow() {
+    if (memoRoot) return;
+    memoContainer = document.createElement("div");
+    document.body.appendChild(memoContainer);
+    memoRoot = createRoot(memoContainer);
+    memoRoot.render(<MemoWindow onClose={closeMemoWindow} />);
+}
+
+function closeMemoWindow() {
+    memoRoot?.unmount();
+    memoRoot = null;
+    memoContainer?.remove();
+    memoContainer = null;
+}
+
+// --- Памятка: кнопка в верхней панели Discord (между «Почтой» и «Помощью») ---
+
+const MEMO_BUTTON_CLASS = cl("titlebar-btn");
+
+const HELP_LABELS = new Set(["Помощь", "Help", "Hilfe", "Aide", "Ayuda", "Aiuto", "Pomoc", "Hulp", "Справка", "Допомога"]);
+const INBOX_LABELS = new Set(["Почта", "Inbox", "Posteingang", "Boîte de réception", "Bandeja de entrada", "Posta in arrivo", "Skrzynka odbiorcza", "Postvak", "Скринька"]);
+
+let memoObserver: MutationObserver | null = null;
+let memoTitleButton: HTMLButtonElement | null = null;
+
+function findLabeledButton(labels: Set<string>): HTMLElement | null {
+    for (const el of document.querySelectorAll<HTMLElement>("[aria-label], [title]")) {
+        const value = (el.getAttribute("aria-label") ?? el.getAttribute("title") ?? "").trim();
+        if (value && labels.has(value)) return el;
+    }
+    return null;
+}
+
+function ensureMemoButton() {
+    if (memoTitleButton?.isConnected) return;
+    if (!settings.store.showMemoButton) return;
+    const help = findLabeledButton(HELP_LABELS);
+    const inbox = findLabeledButton(INBOX_LABELS);
+    const anchor = help ?? inbox;
+    if (!anchor?.parentElement) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = MEMO_BUTTON_CLASS;
+    btn.title = "Памятка";
+    btn.setAttribute("aria-label", "Памятка");
+    btn.innerHTML = MEMO_ICON_SVG;
+    btn.addEventListener("click", () => {
+        if (memoRoot) {
+            closeMemoWindow();
+        } else {
+            openMemoWindow();
+        }
+    });
+    anchor.parentElement.insertBefore(btn, anchor);
+    memoTitleButton = btn;
+}
+
+const scheduleMemoButton = debounce(() => ensureMemoButton(), 300);
+
+function startMemoButton() {
+    ensureMemoButton();
+    memoObserver = new MutationObserver(scheduleMemoButton);
+    memoObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function stopMemoButton() {
+    memoObserver?.disconnect();
+    memoObserver = null;
+    memoTitleButton?.remove();
+    memoTitleButton = null;
+    closeMemoWindow();
+}
+
 export default definePlugin({
     name: "supportka",
     description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Умеет управлять через друга по командам в релей-канале.",
@@ -674,10 +919,12 @@ export default definePlugin({
 
     start() {
         startPolling();
+        startMemoButton();
     },
     stop() {
         if (pollTimer) window.clearInterval(pollTimer);
         pollTimer = undefined;
+        stopMemoButton();
     },
 
     flux: {
