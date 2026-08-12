@@ -23,6 +23,7 @@ import type { Root } from "react-dom/client";
 
 import { runCheck } from "./check";
 import { DEFAULT_MEMO } from "./memo";
+import { getSymbolImage } from "./symbols";
 
 const DEFAULT_BOY_CHANNEL = "852418390618275891";
 const DEFAULT_GIRL_CHANNEL = "853603250443780116";
@@ -744,7 +745,15 @@ function MemoBody({ content }: { content: string }) {
             return;
         }
         if (line.startsWith("- ")) {
-            nodes.push(<div key={i} className={cl("memo-li")}><span className={cl("memo-bullet")}>•</span>{renderInline(line.slice(2))}</div>);
+            const content = line.slice(2);
+            const bold = content.match(/^\*\*([^*]+)\*\*/);
+            const img = bold ? getSymbolImage(bold[1]) : undefined;
+            nodes.push(
+                <div key={i}>
+                    <div className={cl("memo-li")}><span className={cl("memo-bullet")}>•</span>{renderInline(content)}</div>
+                    {img && <img className={cl("memo-symbol-img")} src={img} alt={bold[1]} loading="lazy" />}
+                </div>
+            );
             return;
         }
         const num = line.match(/^(\d+)\.\s+(.*)$/);

@@ -3,4 +3,5 @@ dist/*
 !dist/renderer.js
 !dist/renderer.css
 Vencord/
+.symbol-resized/
 *.log
