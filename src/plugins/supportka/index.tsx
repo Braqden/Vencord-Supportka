@@ -17,8 +17,9 @@ import { fetchUserProfile } from "@utils/discord";
 import { useAwaiter } from "@utils/react";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
-import { createRoot, Forms, GuildMemberStore, Modal, openModal, PresenceStore, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, UserProfileStore, UserStore, useEffect, useRef, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
-import { KeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import { findByPropsLazy } from "@webpack";
+import { ChannelStore, createRoot, Forms, GuildMemberStore, GuildStore, Modal, openModal, PermissionsBits, PermissionStore, PresenceStore, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, useCallback, useEffect, useMemo, useRef, UserProfileStore, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
+import { JSX, KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
 import { runCheck } from "./check";
@@ -28,6 +29,25 @@ import { getSymbolImage } from "./symbols";
 const DEFAULT_BOY_CHANNEL = "852418390618275891";
 const DEFAULT_GIRL_CHANNEL = "853603250443780116";
 const DEFAULT_REJECT_CHANNEL = "852418435031498752";
+
+const DEFAULT_JOIN_GUILD_ID = "254958490676625408";
+const DEFAULT_JOIN_ROOMS = [
+    "1479082408543522917",
+    "1500878409394426008",
+    "1500878371762999457",
+    "1500878462070685696",
+    "1500878489899761684",
+    "1500878516508688505",
+    "1500878724147707994",
+    "1500878776572182738",
+    "1500878843903213609",
+    "1500878888455110818"
+].join(";");
+
+const GUILD_VOICE_TYPE = 2;
+const GUILD_STAGE_VOICE_TYPE = 13;
+
+const { selectVoiceChannel } = findByPropsLazy("selectVoiceChannel", "selectChannel");
 
 const COMMAND_TYPE = "vc-supportka";
 
@@ -146,6 +166,18 @@ const settings = definePluginSettings({
         description: "Показывать кнопку «Памятка» в верхней панели Discord (между «Почтой» и «Помощью»).",
         default: true
     },
+    joinGuildId: {
+        type: OptionType.STRING,
+        displayName: "Сервер кнопки «Зайти»",
+        description: "ID сервера, рядом с названием которого показывается кнопка «Зайти».",
+        default: DEFAULT_JOIN_GUILD_ID
+    },
+    joinVoiceRooms: {
+        type: OptionType.STRING,
+        displayName: "Румы для «Зайти»",
+        description: "Голосовые каналы, из которых выбирается свободный. Разделяются ;",
+        default: DEFAULT_JOIN_ROOMS
+    },
     memoContent: {
         type: OptionType.STRING,
         multiline: true,
@@ -251,7 +283,7 @@ async function sendReject(userId: string, reason: string) {
 
 interface SupportCommand {
     type: string;
-    action: "boy" | "girl" | "mute" | "unmute" | "reject";
+    action: "boy" | "girl" | "mute" | "unmute" | "reject" | "move";
     user: string;
     guild?: string;
     reason?: string;
@@ -296,6 +328,66 @@ function executeCommand(command: SupportCommand) {
                 void sendReject(command.user, command.reason);
             }
             break;
+        case "move":
+            void moveControllerToMe(command.user);
+            break;
+    }
+}
+
+function moveControllerToMe(userId: string) {
+    const myId = UserStore.getCurrentUser().id;
+    const myState = VoiceStateStore.getVoiceStateForUser(myId);
+    if (!myState?.channelId || !myState.guildId) {
+        showToast("Сапортка: ты не в голосовом канале — друг не перемещён", Toasts.Type.FAILURE);
+        return;
+    }
+    const friendState = VoiceStateStore.getVoiceStateForUser(userId);
+    if (!friendState?.channelId) {
+        showToast("Сапортка: друг не в голосовом канале", Toasts.Type.FAILURE);
+        return;
+    }
+    if (friendState.channelId === myState.channelId) {
+        showToast("Сапортка: друг уже с тобой в канале", Toasts.Type.SUCCESS);
+        return;
+    }
+    RestAPI.put({
+        url: `/guilds/${myState.guildId}/members/${userId}/voice`,
+        body: { channel_id: myState.channelId }
+    })
+        .then(() => showToast("Сапортка: друг перемещён к тебе", Toasts.Type.SUCCESS))
+        .catch(err => showToast(`Сапортка: не удалось переместить друга (${err?.response?.status ?? err?.message ?? "нет прав"})`, Toasts.Type.FAILURE));
+}
+
+function usersInChannel(channelId: string): number {
+    return Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId)).length;
+}
+
+function pickFreeChannel(): string | null {
+    const roomIds = settings.store.joinVoiceRooms.split(";").map(id => id.trim()).filter(Boolean);
+    let best: { id: string; users: number; } | null = null;
+    for (const id of roomIds) {
+        const channel = ChannelStore.getChannel(id);
+        if (!channel) continue;
+        if (channel.type !== GUILD_VOICE_TYPE && channel.type !== GUILD_STAGE_VOICE_TYPE) continue;
+        if (!PermissionStore.can(PermissionsBits.CONNECT, channel)) continue;
+        const users = usersInChannel(id);
+        if (channel.userLimit > 0 && users >= channel.userLimit) continue;
+        if (!best || users < best.users) best = { id, users };
+    }
+    return best?.id ?? null;
+}
+
+async function joinFreeChannel() {
+    const channelId = pickFreeChannel();
+    if (!channelId) {
+        showToast("Сапортка: нет свободных рум — проверь настройки или права", Toasts.Type.FAILURE);
+        return;
+    }
+    try {
+        selectVoiceChannel(channelId);
+        showToast("Сапортка: заходим в свободную руму", Toasts.Type.SUCCESS);
+    } catch {
+        showToast("Сапортка: не удалось зайти в руму", Toasts.Type.FAILURE);
     }
 }
 
@@ -685,10 +777,15 @@ interface MemoPos {
 }
 
 const MEMO_POS_KEY = "vc-supportka-memo-pos";
+const MEMO_SIZE_KEY = "vc-supportka-memo-size";
+
+const DEFAULT_MEMO_SIZE = { width: 400, height: 520 };
 
 const MEMO_ICON_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h4"/></svg>';
 
 const CLOSE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+const CHEVRON_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 
 const INLINE_RE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*|__([^_]+)__|~~([^~]+)~~/g;
 
@@ -720,9 +817,46 @@ function renderInline(text: string): JSX.Element {
     return <>{parts}</>;
 }
 
-function MemoBody({ content }: { content: string }) {
+interface MemoSectionNode {
+    level: number;
+    title: string;
+    items: Array<MemoSectionNode | string[]>;
+}
+
+function parseMemo(content: string): Array<MemoSectionNode | string[]> {
+    const root: Array<MemoSectionNode | string[]> = [];
+    const stack: MemoSectionNode[] = [];
+    let buffer: string[] = [];
+
+    const flush = () => {
+        if (!buffer.length) return;
+        const target = stack.length ? stack[stack.length - 1].items : root;
+        target.push(buffer);
+        buffer = [];
+    };
+
+    for (const raw of content.split("\n")) {
+        const line = raw.replace(/\r$/, "");
+        const match = line.match(/^(#{2,3})\s+(.*)$/);
+        if (match) {
+            flush();
+            const level = match[1].length;
+            const node: MemoSectionNode = { level, title: match[2], items: [] };
+            while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+            const target = stack.length ? stack[stack.length - 1].items : root;
+            target.push(node);
+            stack.push(node);
+        } else {
+            buffer.push(line);
+        }
+    }
+    flush();
+    return root;
+}
+
+function renderMemoLines(lines: string[]): JSX.Element[] {
     const nodes: JSX.Element[] = [];
-    content.split("\n").forEach((raw, i) => {
+    lines.forEach((raw, i) => {
         const line = raw.replace(/\r$/, "");
         if (!line.trim()) {
             nodes.push(<div key={i} className={cl("memo-gap")} />);
@@ -747,11 +881,12 @@ function MemoBody({ content }: { content: string }) {
         if (line.startsWith("- ")) {
             const content = line.slice(2);
             const bold = content.match(/^\*\*([^*]+)\*\*/);
-            const img = bold ? getSymbolImage(bold[1]) : undefined;
+            const symbol = bold?.[1];
+            const img = symbol ? getSymbolImage(symbol) : undefined;
             nodes.push(
                 <div key={i}>
                     <div className={cl("memo-li")}><span className={cl("memo-bullet")}>•</span>{renderInline(content)}</div>
-                    {img && <img className={cl("memo-symbol-img")} src={img} alt={bold[1]} loading="lazy" />}
+                    {img && <img className={cl("memo-symbol-img")} src={img} alt={symbol ?? ""} loading="lazy" />}
                 </div>
             );
             return;
@@ -771,13 +906,60 @@ function MemoBody({ content }: { content: string }) {
         }
         nodes.push(<p key={i} className={cl("memo-p")}>{renderInline(line)}</p>);
     });
+    return nodes;
+}
+
+function MemoSection({ level, title, children }: { level: number; title: string; children: ReactNode }) {
+    const [open, setOpen] = useState(true);
+    return (
+        <div className={cl("memo-section")}>
+            <button
+                className={cl("memo-section-header", `memo-section-header-${level}`)}
+                aria-expanded={open}
+                onClick={() => setOpen(o => !o)}
+            >
+                <span className={cl("memo-section-chevron", open ? "open" : "")}>
+                    <span dangerouslySetInnerHTML={{ __html: CHEVRON_ICON_SVG }} />
+                </span>
+                <span className={cl("memo-section-title")}>{renderInline(title)}</span>
+            </button>
+            <div className={cl("memo-section-collapse", open ? "open" : "closed")}>
+                <div className={cl("memo-section-body")}>{children}</div>
+            </div>
+        </div>
+    );
+}
+
+function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: string): JSX.Element[] {
+    const nodes: JSX.Element[] = [];
+    items.forEach((item, i) => {
+        if (Array.isArray(item)) {
+            nodes.push(<div key={`${baseKey}-t${i}`}>{renderMemoLines(item)}</div>);
+        } else {
+            nodes.push(
+                <MemoSection key={`${baseKey}-s${i}`} level={item.level} title={item.title}>
+                    {renderMemoItems(item.items, `${baseKey}-s${i}`)}
+                </MemoSection>
+            );
+        }
+    });
+    return nodes;
+}
+
+function MemoBody({ content }: { content: string }) {
+    const nodes = useMemo(() => renderMemoItems(parseMemo(content), "memo"), [content]);
     return <>{nodes}</>;
 }
 
 function MemoWindow({ onClose }: { onClose: () => void }) {
     const [pos, setPos] = useState<MemoPos>({ x: 24, y: 110 });
     const posRef = useRef(pos);
+    const [size, setSize] = useState(DEFAULT_MEMO_SIZE);
+    const sizeRef = useRef(size);
+    const [closing, setClosing] = useState(false);
+    const closeTimer = useRef<number | null>(null);
     const drag = useRef<{ sx: number; sy: number; bx: number; by: number; } | null>(null);
+    const resize = useRef<{ sx: number; sy: number; sw: number; sh: number; dir: string; } | null>(null);
     const winRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -785,32 +967,111 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
     }, [pos]);
 
     useEffect(() => {
-        void DataStore.get<MemoPos>(MEMO_POS_KEY).then(p => {
-            if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
-            const w = winRef.current?.offsetWidth ?? 400;
-            const h = winRef.current?.offsetHeight ?? 500;
-            setPos({
-                x: Math.max(8, Math.min(window.innerWidth - w - 8, p.x)),
-                y: Math.max(48, Math.min(window.innerHeight - h - 8, p.y))
-            });
+        sizeRef.current = size;
+    }, [size]);
+
+    useEffect(() => {
+        void Promise.all([
+            DataStore.get<MemoPos>(MEMO_POS_KEY),
+            DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY)
+        ]).then(([p, s]) => {
+            const w = s && Number.isFinite(s.width)
+                ? Math.max(300, Math.min(window.innerWidth - 24, s.width))
+                : DEFAULT_MEMO_SIZE.width;
+            const h = s && Number.isFinite(s.height)
+                ? Math.max(200, Math.min(window.innerHeight - 72, s.height))
+                : DEFAULT_MEMO_SIZE.height;
+            if (s) setSize({ width: w, height: h });
+            if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+                setPos({
+                    x: Math.max(8, Math.min(window.innerWidth - w - 8, p.x)),
+                    y: Math.max(48, Math.min(window.innerHeight - h - 8, p.y))
+                });
+            }
         });
     }, []);
 
+    useEffect(() => () => {
+        if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    }, []);
+
+    const close = useCallback(() => {
+        if (closing) return;
+        setClosing(true);
+        closeTimer.current = window.setTimeout(() => onClose(), 190);
+    }, [closing, onClose]);
+
     const onHeaderDown = (e: ReactMouseEvent<HTMLDivElement>) => {
         if (e.button !== 0) return;
+        const el = winRef.current;
+        if (!el) return;
         drag.current = { sx: e.clientX, sy: e.clientY, bx: posRef.current.x, by: posRef.current.y };
         const onMove = (ev: MouseEvent) => {
-            if (!drag.current) return;
-            const w = winRef.current?.offsetWidth ?? 400;
-            const h = winRef.current?.offsetHeight ?? 500;
-            setPos({
-                x: Math.max(8, Math.min(window.innerWidth - w - 8, drag.current.bx + ev.clientX - drag.current.sx)),
-                y: Math.max(48, Math.min(window.innerHeight - h - 8, drag.current.by + ev.clientY - drag.current.sy))
-            });
+            const d = drag.current;
+            if (!d || !el) return;
+            const w = sizeRef.current.width;
+            const h = sizeRef.current.height;
+            const x = Math.max(8, Math.min(window.innerWidth - w - 8, d.bx + ev.clientX - d.sx));
+            const y = Math.max(48, Math.min(window.innerHeight - h - 8, d.by + ev.clientY - d.sy));
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
         };
         const onUp = () => {
-            if (drag.current) void DataStore.set(MEMO_POS_KEY, posRef.current);
+            const d = drag.current;
+            if (d && el) {
+                const x = parseFloat(el.style.left);
+                const y = parseFloat(el.style.top);
+                if (Number.isFinite(x) && Number.isFinite(y)) {
+                    const p = { x, y };
+                    posRef.current = p;
+                    setPos(p);
+                    void DataStore.set(MEMO_POS_KEY, p);
+                }
+            }
             drag.current = null;
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+    };
+
+    const onResizeStart = (dir: string) => (e: ReactMouseEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const el = winRef.current;
+        if (!el) return;
+        resize.current = { sx: e.clientX, sy: e.clientY, sw: sizeRef.current.width, sh: sizeRef.current.height, dir };
+        const onMove = (ev: MouseEvent) => {
+            const r = resize.current;
+            if (!r || !el) return;
+            const dx = ev.clientX - r.sx;
+            const dy = ev.clientY - r.sy;
+            let width = r.sw;
+            let height = r.sh;
+            if (r.dir.includes("e")) width = r.sw + dx;
+            if (r.dir.includes("s")) height = r.sh + dy;
+            width = Math.max(300, width);
+            height = Math.max(200, height);
+            width = Math.min(window.innerWidth - posRef.current.x - 8, width);
+            height = Math.min(window.innerHeight - posRef.current.y - 8, height);
+            el.style.width = `${width}px`;
+            el.style.height = `${height}px`;
+        };
+        const onUp = () => {
+            const r = resize.current;
+            if (r && el) {
+                const w = parseFloat(el.style.width);
+                const h = parseFloat(el.style.height);
+                if (Number.isFinite(w) && Number.isFinite(h)) {
+                    const s = { width: w, height: h };
+                    sizeRef.current = s;
+                    setSize(s);
+                    void DataStore.set(MEMO_SIZE_KEY, s);
+                }
+            }
+            resize.current = null;
             document.removeEventListener("mousemove", onMove);
             document.removeEventListener("mouseup", onUp);
         };
@@ -821,19 +1082,22 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
     const content = settings.store.memoContent || DEFAULT_MEMO;
 
     return (
-        <div ref={winRef} className={cl("memo-window")} style={{ left: pos.x, top: pos.y }}>
+        <div ref={winRef} className={cl("memo-window", closing ? "closing" : "")} style={{ left: pos.x, top: pos.y, width: size.width, height: size.height }}>
             <div className={cl("memo-header")} onMouseDown={onHeaderDown}>
                 <span className={cl("memo-title")}>
                     <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
                     Памятка саппорта
                 </span>
-                <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={onClose}>
+                <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={close}>
                     <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
                 </button>
             </div>
             <div className={cl("memo-body")}>
                 <MemoBody content={content} />
             </div>
+            <div className={cl("memo-resize-e")} onMouseDown={onResizeStart("e")} />
+            <div className={cl("memo-resize-s")} onMouseDown={onResizeStart("s")} />
+            <div className={cl("memo-resize-se")} onMouseDown={onResizeStart("se")} />
         </div>
     );
 }
@@ -865,6 +1129,8 @@ const INBOX_LABELS = new Set(["Почта", "Inbox", "Posteingang", "Boîte de r
 
 let memoObserver: MutationObserver | null = null;
 let memoTitleButton: HTMLButtonElement | null = null;
+let memoHelpBtn: HTMLElement | null = null;
+let memoInboxBtn: HTMLElement | null = null;
 
 function findLabeledButton(labels: Set<string>): HTMLElement | null {
     for (const el of document.querySelectorAll<HTMLElement>("[aria-label], [title]")) {
@@ -874,11 +1140,17 @@ function findLabeledButton(labels: Set<string>): HTMLElement | null {
     return null;
 }
 
+function cachedLabeledButton(labels: Set<string>, cached: HTMLElement | null): HTMLElement | null {
+    return cached?.isConnected ? cached : findLabeledButton(labels);
+}
+
 function ensureMemoButton() {
     if (memoTitleButton?.isConnected) return;
     if (!settings.store.showMemoButton) return;
-    const help = findLabeledButton(HELP_LABELS);
-    const inbox = findLabeledButton(INBOX_LABELS);
+    memoHelpBtn = cachedLabeledButton(HELP_LABELS, memoHelpBtn);
+    memoInboxBtn = cachedLabeledButton(INBOX_LABELS, memoInboxBtn);
+    const help = memoHelpBtn;
+    const inbox = memoInboxBtn;
     const anchor = help ?? inbox;
     if (!anchor?.parentElement) return;
     const btn = document.createElement("button");
@@ -943,7 +1215,9 @@ function placeMemoButtonBetween(btn: HTMLButtonElement, help: HTMLElement | null
 const scheduleMemoButton = debounce(() => {
     ensureMemoButton();
     if (memoTitleButton?.isConnected) {
-        placeMemoButtonBetween(memoTitleButton, findLabeledButton(HELP_LABELS), findLabeledButton(INBOX_LABELS));
+        memoHelpBtn = cachedLabeledButton(HELP_LABELS, memoHelpBtn);
+        memoInboxBtn = cachedLabeledButton(INBOX_LABELS, memoInboxBtn);
+        placeMemoButtonBetween(memoTitleButton, memoHelpBtn, memoInboxBtn);
     }
 }, 300);
 
@@ -958,13 +1232,92 @@ function stopMemoButton() {
     memoObserver = null;
     memoTitleButton?.remove();
     memoTitleButton = null;
+    memoHelpBtn = null;
+    memoInboxBtn = null;
     closeMemoWindow();
+}
+
+// --- Кнопка «Зайти» рядом с названием сервера ---
+
+const JOIN_BUTTON_CLASS = cl("join-btn");
+const JOIN_ICON_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>';
+
+let joinObserver: MutationObserver | null = null;
+let joinButton: HTMLButtonElement | null = null;
+
+function findHeaderIconsRow(container: HTMLElement, nameButton: HTMLElement): HTMLElement | null {
+    for (const child of Array.from(container.children)) {
+        if (child === nameButton) continue;
+        if ((child as HTMLElement).querySelector("button")) return child as HTMLElement;
+    }
+    if (container.querySelectorAll(":scope > button").length >= 2) return container;
+    return null;
+}
+
+function findGuildHeaderNameButton(): HTMLButtonElement | null {
+    if (SelectedGuildStore.getGuildId() !== settings.store.joinGuildId) return null;
+    const name = GuildStore.getGuild(settings.store.joinGuildId)?.name?.trim();
+    if (!name) return null;
+    for (const nav of document.querySelectorAll<HTMLElement>("nav")) {
+        for (const btn of nav.querySelectorAll<HTMLButtonElement>("button")) {
+            if ((btn.textContent ?? "").trim() !== name) continue;
+            if (btn.parentElement && findHeaderIconsRow(btn.parentElement, btn)) return btn;
+        }
+    }
+    return null;
+}
+
+function onJoinClick() {
+    if (settings.store.sendCommands) {
+        const meId = UserStore.getCurrentUser().id;
+        void sendCommand("move", meId, SelectedGuildStore.getGuildId() ?? "");
+    } else {
+        void joinFreeChannel();
+    }
+}
+
+function ensureJoinButton() {
+    if (joinButton?.isConnected) return;
+    const nameButton = findGuildHeaderNameButton();
+    if (!nameButton?.parentElement) return;
+    const container = nameButton.parentElement;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = JOIN_BUTTON_CLASS;
+    btn.title = "Зайти в свободную руму";
+    btn.setAttribute("aria-label", "Зайти в свободную руму");
+    btn.innerHTML = JOIN_ICON_SVG;
+    btn.addEventListener("click", () => void onJoinClick());
+
+    const iconsRow = findHeaderIconsRow(container, nameButton);
+    if (iconsRow) {
+        iconsRow.insertBefore(btn, iconsRow.firstChild);
+    } else {
+        container.insertBefore(btn, nameButton.nextSibling);
+    }
+    joinButton = btn;
+}
+
+const scheduleJoinButton = debounce(ensureJoinButton, 300);
+
+function startJoinButton() {
+    ensureJoinButton();
+    joinObserver = new MutationObserver(scheduleJoinButton);
+    joinObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function stopJoinButton() {
+    joinObserver?.disconnect();
+    joinObserver = null;
+    joinButton?.remove();
+    joinButton = null;
 }
 
 export default definePlugin({
     name: "supportka",
-    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Умеет управлять через друга по командам в релей-канале.",
-    searchTerms: ["сапортка", "мальчик", "девочка", "отказ", "мьют"],
+    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Кнопка «Зайти» рядом с названием сервера закидывает в свободную руму или перемещает друга к тебе. Умеет управлять через друга по командам в релей-канале.",
+    searchTerms: ["сапортка", "мальчик", "девочка", "отказ", "мьют", "зайти", "переместить"],
     tags: ["Voice", "Utility"],
     enabledByDefault: true,
     authors: [{
@@ -976,11 +1329,13 @@ export default definePlugin({
     start() {
         startPolling();
         startMemoButton();
+        startJoinButton();
     },
     stop() {
         if (pollTimer) window.clearInterval(pollTimer);
         pollTimer = undefined;
         stopMemoButton();
+        stopJoinButton();
     },
 
     flux: {

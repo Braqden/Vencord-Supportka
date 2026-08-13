@@ -1,0 +1,26 @@
+{
+    "name": "@braqden/vencord-supportka",
+    "version": "1.0.0",
+    "description": "Плагин supportka для Vencord: управление пользователями, быстрый вход в голосовые комнаты, автоматическая проверка профилей, система меток и встроенная памятка саппорта.",
+    "license": "GPL-3.0-or-later",
+    "author": "Braqden",
+    "keywords": [
+        "vencord",
+        "plugin",
+        "discord",
+        "supportka",
+        "lounge"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Braqden/Vencord-Supportka.git"
+    },
+    "files": [
+        "src/plugins/supportka",
+        "README.md"
+    ],
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com/",
+        "access": "public"
+    }
+}
