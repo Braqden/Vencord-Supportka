@@ -19,10 +19,11 @@ import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
 import { findByPropsLazy } from "@webpack";
 import { ChannelStore, createRoot, Forms, GuildMemberStore, GuildStore, Modal, openModal, PermissionsBits, PermissionStore, PresenceStore, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, useCallback, useEffect, useMemo, useRef, UserProfileStore, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
-import { JSX, KeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
 import { runCheck } from "./check";
+import { startMascot, stopMascot } from "./mascot";
 import { DEFAULT_MEMO } from "./memo";
 import { getSymbolImage } from "./symbols";
 
@@ -30,7 +31,7 @@ const DEFAULT_BOY_CHANNEL = "852418390618275891";
 const DEFAULT_GIRL_CHANNEL = "853603250443780116";
 const DEFAULT_REJECT_CHANNEL = "852418435031498752";
 
-const DEFAULT_JOIN_GUILD_ID = "254958490676625408";
+const DEFAULT_LOBBY_CHANNEL_ID = "1478896349142319204";
 const DEFAULT_JOIN_ROOMS = [
     "1479082408543522917",
     "1500878409394426008",
@@ -78,6 +79,16 @@ async function clearStatus(userId: string) {
 const cl = classNameFactory("vc-supportka-");
 
 const settings = definePluginSettings({
+    mascotEnabled: {
+        type: OptionType.BOOLEAN,
+        displayName: "Маскот (девочка)",
+        description: "Девочка-персонаж, которая ходит по окну Discord. 3 быстрых клика открывают сайт замен. Выключи, чтобы убрать.",
+        default: true,
+        onChange: (v: boolean) => {
+            if (v) startMascot();
+            else stopMascot();
+        }
+    },
     relayChannelId: {
         type: OptionType.STRING,
         description: "Канал, в который отправляются команды (релей-канал)",
@@ -166,11 +177,11 @@ const settings = definePluginSettings({
         description: "Показывать кнопку «Памятка» в верхней панели Discord (между «Почтой» и «Помощью»).",
         default: true
     },
-    joinGuildId: {
+    lobbyChannelId: {
         type: OptionType.STRING,
-        displayName: "Сервер кнопки «Зайти»",
-        description: "ID сервера, рядом с названием которого показывается кнопка «Зайти».",
-        default: DEFAULT_JOIN_GUILD_ID
+        displayName: "Прихожая",
+        description: "ID голосового канала «прихожая». Кнопка «Зайти» у друга сработает, только если он находится в прихожей — тогда его переместит к тебе в комнату.",
+        default: DEFAULT_LOBBY_CHANNEL_ID
     },
     joinVoiceRooms: {
         type: OptionType.STRING,
@@ -346,6 +357,11 @@ function moveControllerToMe(userId: string) {
         showToast("Сапортка: друг не в голосовом канале", Toasts.Type.FAILURE);
         return;
     }
+    const lobbyId = settings.store.lobbyChannelId?.trim();
+    if (lobbyId && friendState.channelId !== lobbyId) {
+        showToast("Сапортка: друг должен быть в прихожей, чтобы зайти к тебе", Toasts.Type.FAILURE);
+        return;
+    }
     if (friendState.channelId === myState.channelId) {
         showToast("Сапортка: друг уже с тобой в канале", Toasts.Type.SUCCESS);
         return;
@@ -443,8 +459,12 @@ function handleRelayMessage(message: { id?: string; channel_id?: string; content
     executeCommand(command);
 }
 
+let pollInFlight = false;
+
 async function pollRelay() {
+    if (pollInFlight) return;
     if (!settings.store.executeCommands) return;
+    pollInFlight = true;
     try {
         const { body } = await RestAPI.get({
             url: `/channels/${settings.store.relayChannelId}/messages?limit=10`
@@ -452,6 +472,8 @@ async function pollRelay() {
         for (const message of body) handleRelayMessage(message);
     } catch {
         // релей-канал недоступен — ничего не делаем
+    } finally {
+        pollInFlight = false;
     }
 }
 
@@ -951,11 +973,11 @@ function MemoBody({ content }: { content: string }) {
     return <>{nodes}</>;
 }
 
-function MemoWindow({ onClose }: { onClose: () => void }) {
-    const [pos, setPos] = useState<MemoPos>({ x: 24, y: 110 });
-    const posRef = useRef(pos);
-    const [size, setSize] = useState(DEFAULT_MEMO_SIZE);
-    const sizeRef = useRef(size);
+function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void; initialPos: MemoPos; initialSize: { width: number; height: number; }; }) {
+    const [pos, setPos] = useState<MemoPos>(initialPos);
+    const posRef = useRef(initialPos);
+    const [size, setSize] = useState(initialSize);
+    const sizeRef = useRef(initialSize);
     const [closing, setClosing] = useState(false);
     const closeTimer = useRef<number | null>(null);
     const drag = useRef<{ sx: number; sy: number; bx: number; by: number; } | null>(null);
@@ -970,29 +992,19 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
         sizeRef.current = size;
     }, [size]);
 
-    useEffect(() => {
-        void Promise.all([
-            DataStore.get<MemoPos>(MEMO_POS_KEY),
-            DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY)
-        ]).then(([p, s]) => {
-            const w = s && Number.isFinite(s.width)
-                ? Math.max(300, Math.min(window.innerWidth - 24, s.width))
-                : DEFAULT_MEMO_SIZE.width;
-            const h = s && Number.isFinite(s.height)
-                ? Math.max(200, Math.min(window.innerHeight - 72, s.height))
-                : DEFAULT_MEMO_SIZE.height;
-            if (s) setSize({ width: w, height: h });
-            if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
-                setPos({
-                    x: Math.max(8, Math.min(window.innerWidth - w - 8, p.x)),
-                    y: Math.max(48, Math.min(window.innerHeight - h - 8, p.y))
-                });
-            }
-        });
-    }, []);
-
     useEffect(() => () => {
         if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    }, []);
+
+    const interaction = useRef<(() => void) | null>(null);
+
+    useEffect(() => {
+        const cancel = () => interaction.current?.();
+        window.addEventListener("blur", cancel);
+        return () => {
+            window.removeEventListener("blur", cancel);
+            cancel();
+        };
     }, []);
 
     const close = useCallback(() => {
@@ -1001,12 +1013,17 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
         closeTimer.current = window.setTimeout(() => onClose(), 190);
     }, [closing, onClose]);
 
-    const onHeaderDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const onHeaderDown = (e: ReactPointerEvent<HTMLDivElement>) => {
         if (e.button !== 0) return;
+        if ((e.target as HTMLElement).closest("button")) return;
+        e.preventDefault();
         const el = winRef.current;
+        const target = e.currentTarget;
         if (!el) return;
         drag.current = { sx: e.clientX, sy: e.clientY, bx: posRef.current.x, by: posRef.current.y };
-        const onMove = (ev: MouseEvent) => {
+        target.setPointerCapture(e.pointerId);
+
+        const onMove = (ev: PointerEvent) => {
             const d = drag.current;
             if (!d || !el) return;
             const w = sizeRef.current.width;
@@ -1015,6 +1032,13 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
             const y = Math.max(48, Math.min(window.innerHeight - h - 8, d.by + ev.clientY - d.sy));
             el.style.left = `${x}px`;
             el.style.top = `${y}px`;
+        };
+        const cleanup = () => {
+            target.removeEventListener("pointermove", onMove);
+            target.removeEventListener("pointerup", onUp);
+            target.removeEventListener("pointercancel", onUp);
+            drag.current = null;
+            interaction.current = null;
         };
         const onUp = () => {
             const d = drag.current;
@@ -1028,22 +1052,25 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
                     void DataStore.set(MEMO_POS_KEY, p);
                 }
             }
-            drag.current = null;
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
+            cleanup();
         };
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
+        target.addEventListener("pointermove", onMove);
+        target.addEventListener("pointerup", onUp);
+        target.addEventListener("pointercancel", onUp);
+        interaction.current = cleanup;
     };
 
-    const onResizeStart = (dir: string) => (e: ReactMouseEvent<HTMLDivElement>) => {
+    const onResizeStart = (dir: string) => (e: ReactPointerEvent<HTMLDivElement>) => {
         if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
         const el = winRef.current;
+        const target = e.currentTarget;
         if (!el) return;
         resize.current = { sx: e.clientX, sy: e.clientY, sw: sizeRef.current.width, sh: sizeRef.current.height, dir };
-        const onMove = (ev: MouseEvent) => {
+        target.setPointerCapture(e.pointerId);
+
+        const onMove = (ev: PointerEvent) => {
             const r = resize.current;
             if (!r || !el) return;
             const dx = ev.clientX - r.sx;
@@ -1059,6 +1086,13 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
             el.style.width = `${width}px`;
             el.style.height = `${height}px`;
         };
+        const cleanup = () => {
+            target.removeEventListener("pointermove", onMove);
+            target.removeEventListener("pointerup", onUp);
+            target.removeEventListener("pointercancel", onUp);
+            resize.current = null;
+            interaction.current = null;
+        };
         const onUp = () => {
             const r = resize.current;
             if (r && el) {
@@ -1071,19 +1105,19 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
                     void DataStore.set(MEMO_SIZE_KEY, s);
                 }
             }
-            resize.current = null;
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
+            cleanup();
         };
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
+        target.addEventListener("pointermove", onMove);
+        target.addEventListener("pointerup", onUp);
+        target.addEventListener("pointercancel", onUp);
+        interaction.current = cleanup;
     };
 
     const content = settings.store.memoContent || DEFAULT_MEMO;
 
     return (
         <div ref={winRef} className={cl("memo-window", closing ? "closing" : "")} style={{ left: pos.x, top: pos.y, width: size.width, height: size.height }}>
-            <div className={cl("memo-header")} onMouseDown={onHeaderDown}>
+            <div className={cl("memo-header")} onPointerDown={onHeaderDown}>
                 <span className={cl("memo-title")}>
                     <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
                     Памятка саппорта
@@ -1095,9 +1129,9 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
             <div className={cl("memo-body")}>
                 <MemoBody content={content} />
             </div>
-            <div className={cl("memo-resize-e")} onMouseDown={onResizeStart("e")} />
-            <div className={cl("memo-resize-s")} onMouseDown={onResizeStart("s")} />
-            <div className={cl("memo-resize-se")} onMouseDown={onResizeStart("se")} />
+            <div className={cl("memo-resize-e")} onPointerDown={onResizeStart("e")} />
+            <div className={cl("memo-resize-s")} onPointerDown={onResizeStart("s")} />
+            <div className={cl("memo-resize-se")} onPointerDown={onResizeStart("se")} />
         </div>
     );
 }
@@ -1105,12 +1139,33 @@ function MemoWindow({ onClose }: { onClose: () => void }) {
 let memoRoot: Root | null = null;
 let memoContainer: HTMLDivElement | null = null;
 
-function openMemoWindow() {
+async function openMemoWindow() {
     if (memoRoot) return;
+    const [p, s] = await Promise.all([
+        DataStore.get<MemoPos>(MEMO_POS_KEY),
+        DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY)
+    ]);
+    if (memoRoot) return;
+    const w = s && Number.isFinite(s.width)
+        ? Math.max(300, Math.min(window.innerWidth - 24, s.width))
+        : DEFAULT_MEMO_SIZE.width;
+    const h = s && Number.isFinite(s.height)
+        ? Math.max(200, Math.min(window.innerHeight - 72, s.height))
+        : DEFAULT_MEMO_SIZE.height;
+    const x = p && Number.isFinite(p.x)
+        ? Math.max(8, Math.min(window.innerWidth - w - 8, p.x))
+        : 24;
+    const y = p && Number.isFinite(p.y)
+        ? Math.max(48, Math.min(window.innerHeight - h - 8, p.y))
+        : 110;
     memoContainer = document.createElement("div");
     document.body.appendChild(memoContainer);
     memoRoot = createRoot(memoContainer);
-    memoRoot.render(<MemoWindow onClose={closeMemoWindow} />);
+    memoRoot.render(
+        <ErrorBoundary>
+            <MemoWindow onClose={closeMemoWindow} initialPos={{ x, y }} initialSize={{ width: w, height: h }} />
+        </ErrorBoundary>,
+    );
 }
 
 function closeMemoWindow() {
@@ -1195,39 +1250,52 @@ function placeMemoButtonBetween(btn: HTMLButtonElement, help: HTMLElement | null
     btn.style.width = `${rr.width}px`;
     btn.style.margin = "0";
 
-    if (flows) {
-        btn.style.position = "";
-        btn.style.left = "";
-        btn.style.top = "";
-        btn.style.zIndex = "";
-        return;
-    }
-
     // Контейнер Discord не разложил кнопку по порядку — фиксируем её в зазоре между кнопками.
-    const gap = or.left - rr.right;
-    if (gap < rr.width + 8) return;
-    btn.style.position = "fixed";
-    btn.style.left = `${rr.right + (gap - rr.width) / 2}px`;
-    btn.style.top = `${rr.top}px`;
-    btn.style.zIndex = "100001";
+    const fixed = flows
+        ? ""
+        : (() => {
+            const gap = or.left - rr.right;
+            if (gap < rr.width + 8) return null;
+            return `position:fixed;left:${rr.right + (gap - rr.width) / 2}px;top:${rr.top}px;z-index:100001;`;
+        })();
+
+    const prev = btn.getAttribute("data-memo-pos") ?? "";
+    if (fixed === null) return;
+    if (prev === fixed) return;
+    btn.setAttribute("data-memo-pos", fixed);
+    btn.style.position = "";
+    btn.style.left = "";
+    btn.style.top = "";
+    btn.style.zIndex = "";
+    if (fixed) {
+        for (const part of fixed.split(";")) {
+            if (!part) continue;
+            const idx = part.indexOf(":");
+            btn.style[part.slice(0, idx) as "position"] = part.slice(idx + 1);
+        }
+    }
 }
 
 const scheduleMemoButton = debounce(() => {
     ensureMemoButton();
-    if (memoTitleButton?.isConnected) {
-        memoHelpBtn = cachedLabeledButton(HELP_LABELS, memoHelpBtn);
-        memoInboxBtn = cachedLabeledButton(INBOX_LABELS, memoInboxBtn);
-        placeMemoButtonBetween(memoTitleButton, memoHelpBtn, memoInboxBtn);
-    }
 }, 300);
+
+function onMemoWindowResize() {
+    if (!memoTitleButton?.isConnected) return;
+    memoHelpBtn = cachedLabeledButton(HELP_LABELS, memoHelpBtn);
+    memoInboxBtn = cachedLabeledButton(INBOX_LABELS, memoInboxBtn);
+    placeMemoButtonBetween(memoTitleButton, memoHelpBtn, memoInboxBtn);
+}
 
 function startMemoButton() {
     ensureMemoButton();
+    window.addEventListener("resize", onMemoWindowResize);
     memoObserver = new MutationObserver(scheduleMemoButton);
     memoObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function stopMemoButton() {
+    window.removeEventListener("resize", onMemoWindowResize);
     memoObserver?.disconnect();
     memoObserver = null;
     memoTitleButton?.remove();
@@ -1244,32 +1312,54 @@ const JOIN_ICON_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="non
 
 let joinObserver: MutationObserver | null = null;
 let joinButton: HTMLButtonElement | null = null;
+let joinRetryTimer: number | undefined;
 
 function findHeaderIconsRow(container: HTMLElement, nameButton: HTMLElement): HTMLElement | null {
     for (const child of Array.from(container.children)) {
         if (child === nameButton) continue;
-        if ((child as HTMLElement).querySelector("button")) return child as HTMLElement;
+        const el = child as HTMLElement;
+        if (el.tagName === "BUTTON") continue;
+        if (el.querySelector("button")) return el;
     }
     if (container.querySelectorAll(":scope > button").length >= 2) return container;
     return null;
 }
 
-function findGuildHeaderNameButton(): HTMLButtonElement | null {
-    if (SelectedGuildStore.getGuildId() !== settings.store.joinGuildId) return null;
-    const name = GuildStore.getGuild(settings.store.joinGuildId)?.name?.trim();
+function findGuildHeaderNameButton(): HTMLElement | null {
+    const guildId = SelectedGuildStore.getGuildId();
+    if (!guildId) return null;
+    const name = GuildStore.getGuild(guildId)?.name?.trim();
     if (!name) return null;
-    for (const nav of document.querySelectorAll<HTMLElement>("nav")) {
-        for (const btn of nav.querySelectorAll<HTMLButtonElement>("button")) {
-            if ((btn.textContent ?? "").trim() !== name) continue;
-            if (btn.parentElement && findHeaderIconsRow(btn.parentElement, btn)) return btn;
+    const nameLower = name.toLowerCase();
+
+    let fallback: HTMLElement | null = null;
+    for (const btn of document.querySelectorAll<HTMLElement>("button, [role='button']")) {
+        if (btn.offsetParent === null) continue;
+        const text = (btn.textContent ?? "").trim();
+        const label = (btn.getAttribute("aria-label") ?? btn.getAttribute("title") ?? "").trim().toLowerCase();
+        if (text !== name && text.toLowerCase() !== nameLower && !label.includes(nameLower)) continue;
+        if (!fallback) fallback = btn;
+        let el: HTMLElement | null = btn;
+        while (el) {
+            const cls = typeof el.className === "string" ? el.className : "";
+            if (cls.includes("sidebar") || cls.includes("mainContent") || cls.includes("titleBar") || cls.includes("children")) {
+                return btn;
+            }
+            el = el.parentElement;
         }
     }
-    return null;
+    return fallback;
 }
 
 function onJoinClick() {
+    const meId = UserStore.getCurrentUser().id;
+    const lobbyId = settings.store.lobbyChannelId?.trim();
     if (settings.store.sendCommands) {
-        const meId = UserStore.getCurrentUser().id;
+        const myVoice = VoiceStateStore.getVoiceStateForUser(meId);
+        if (lobbyId && myVoice?.channelId !== lobbyId) {
+            showToast("Сапортка: чтобы зайти к саппорту, сначала зайди в прихожую", Toasts.Type.FAILURE);
+            return;
+        }
         void sendCommand("move", meId, SelectedGuildStore.getGuildId() ?? "");
     } else {
         void joinFreeChannel();
@@ -1280,21 +1370,26 @@ function ensureJoinButton() {
     if (joinButton?.isConnected) return;
     const nameButton = findGuildHeaderNameButton();
     if (!nameButton?.parentElement) return;
-    const container = nameButton.parentElement;
+    joinButton?.remove();
+    joinButton = null;
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = JOIN_BUTTON_CLASS;
-    btn.title = "Зайти в свободную руму";
-    btn.setAttribute("aria-label", "Зайти в свободную руму");
+    const title = settings.store.sendCommands
+        ? "Зайти к саппорту (переместит в его комнату)"
+        : "Зайти в свободную руму";
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
     btn.innerHTML = JOIN_ICON_SVG;
     btn.addEventListener("click", () => void onJoinClick());
 
-    const iconsRow = findHeaderIconsRow(container, nameButton);
-    if (iconsRow) {
+    const parent = nameButton.parentElement;
+    const iconsRow = findHeaderIconsRow(parent, nameButton);
+    if (iconsRow && iconsRow !== parent) {
         iconsRow.insertBefore(btn, iconsRow.firstChild);
     } else {
-        container.insertBefore(btn, nameButton.nextSibling);
+        nameButton.insertAdjacentElement("afterend", btn);
     }
     joinButton = btn;
 }
@@ -1305,18 +1400,21 @@ function startJoinButton() {
     ensureJoinButton();
     joinObserver = new MutationObserver(scheduleJoinButton);
     joinObserver.observe(document.body, { childList: true, subtree: true });
+    joinRetryTimer = window.setInterval(ensureJoinButton, 3000);
 }
 
 function stopJoinButton() {
     joinObserver?.disconnect();
     joinObserver = null;
+    if (joinRetryTimer) window.clearInterval(joinRetryTimer);
+    joinRetryTimer = undefined;
     joinButton?.remove();
     joinButton = null;
 }
 
 export default definePlugin({
     name: "supportka",
-    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Кнопка «Зайти» рядом с названием сервера закидывает в свободную руму или перемещает друга к тебе. Умеет управлять через друга по командам в релей-канале.",
+    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Кнопка «Зайти» рядом с названием сервера: у тебя закидывает в свободную руму, у друга — перемещает его к тебе в комнату (друг должен быть в прихожей). Умеет управлять через друга по командам в релей-канале.",
     searchTerms: ["сапортка", "мальчик", "девочка", "отказ", "мьют", "зайти", "переместить"],
     tags: ["Voice", "Utility"],
     enabledByDefault: true,
@@ -1330,12 +1428,14 @@ export default definePlugin({
         startPolling();
         startMemoButton();
         startJoinButton();
+        if (settings.store.mascotEnabled) startMascot();
     },
     stop() {
         if (pollTimer) window.clearInterval(pollTimer);
         pollTimer = undefined;
         stopMemoButton();
         stopJoinButton();
+        stopMascot();
     },
 
     flux: {

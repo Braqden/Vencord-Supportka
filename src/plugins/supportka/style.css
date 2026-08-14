@@ -166,7 +166,7 @@
 
 .vc-supportka-memo-window {
     position: fixed;
-    z-index: 100000;
+    z-index: 2147483001;
     display: flex;
     flex-direction: column;
     min-width: 300px;
@@ -184,7 +184,7 @@
     will-change: transform, opacity;
 }
 
-.vc-supportka-memo-window.closing {
+.vc-supportka-memo-window.vc-supportka-closing {
     animation: vc-supportka-memo-out 0.18s ease both;
     pointer-events: none;
 }
@@ -224,6 +224,7 @@
     cursor: move;
     flex: 0 0 auto;
     user-select: none;
+    touch-action: none;
 }
 
 .vc-supportka-memo-title {
@@ -321,7 +322,7 @@
     transition: transform 0.2s ease, color 0.15s ease;
 }
 
-.vc-supportka-memo-section-chevron.open {
+.vc-supportka-memo-section-chevron.vc-supportka-open {
     transform: rotate(90deg);
 }
 
@@ -349,7 +350,7 @@
     transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
 }
 
-.vc-supportka-memo-section-collapse.closed {
+.vc-supportka-memo-section-collapse.vc-supportka-closed {
     grid-template-rows: 0fr;
     opacity: 0;
     pointer-events: none;
@@ -366,6 +367,7 @@
 .vc-supportka-memo-resize-se {
     position: absolute;
     z-index: 10;
+    touch-action: none;
 }
 
 .vc-supportka-memo-resize-e {
@@ -504,4 +506,154 @@
 
 .vc-supportka-memo-body a:hover {
     text-decoration: underline;
+}
+
+/* --- Маскот: девочка ходит по окну, 3 клика открывают сайт --- */
+
+.vc-supportka-mascot {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 110px;
+    height: 165px;
+    z-index: 2147483000;
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+    will-change: transform;
+}
+
+.vc-supportka-mascot img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 2px solid rgb(255 255 255 / 18%);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 55%);
+    pointer-events: none;
+    transform-origin: 50% 92%;
+    will-change: transform;
+}
+
+.vc-supportka-mascot::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 5px;
+    width: 88px;
+    height: 14px;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, rgb(0 0 0 / 40%), transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+.vc-supportka-mascot.dragging {
+    cursor: grabbing;
+}
+
+.vc-supportka-mascot.dragging img,
+.vc-supportka-mascot.dragging::after {
+    animation: none;
+}
+
+.vc-supportka-mascot.walking img {
+    animation: vc-supportka-mascot-walk 0.34s ease-in-out infinite;
+}
+
+.vc-supportka-mascot:not(.walking) img {
+    animation: vc-supportka-mascot-breathe 2.2s ease-in-out infinite;
+}
+
+.vc-supportka-mascot.walking::after {
+    animation: vc-supportka-mascot-shadow-walk 0.34s ease-in-out infinite;
+}
+
+.vc-supportka-mascot:not(.walking)::after {
+    animation: vc-supportka-mascot-shadow-idle 2.2s ease-in-out infinite;
+}
+
+.vc-supportka-mascot.clicked img {
+    border-color: #fff;
+    box-shadow: 0 6px 20px rgb(255 255 255 / 40%);
+}
+
+@keyframes vc-supportka-mascot-walk {
+    0% {
+        transform: translateY(0) rotate(-3deg);
+    }
+
+    25% {
+        transform: translateY(-8px) rotate(0deg);
+    }
+
+    50% {
+        transform: translateY(0) rotate(3deg);
+    }
+
+    75% {
+        transform: translateY(-8px) rotate(0deg);
+    }
+
+    100% {
+        transform: translateY(0) rotate(-3deg);
+    }
+}
+
+@keyframes vc-supportka-mascot-shadow-walk {
+    0% {
+        transform: translateX(-50%) scale(1);
+        opacity: 0.9;
+    }
+
+    25% {
+        transform: translateX(-50%) scale(0.82);
+        opacity: 0.55;
+    }
+
+    50% {
+        transform: translateX(-50%) scale(1);
+        opacity: 0.9;
+    }
+
+    75% {
+        transform: translateX(-50%) scale(0.82);
+        opacity: 0.55;
+    }
+
+    100% {
+        transform: translateX(-50%) scale(1);
+        opacity: 0.9;
+    }
+}
+
+@keyframes vc-supportka-mascot-breathe {
+    0% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-4px);
+    }
+
+    100% {
+        transform: translateY(0);
+    }
+}
+
+@keyframes vc-supportka-mascot-shadow-idle {
+    0% {
+        transform: translateX(-50%) scale(1);
+        opacity: 0.9;
+    }
+
+    50% {
+        transform: translateX(-50%) scale(0.92);
+        opacity: 0.7;
+    }
+
+    100% {
+        transform: translateX(-50%) scale(1);
+        opacity: 0.9;
+    }
 }

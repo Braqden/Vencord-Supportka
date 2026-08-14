@@ -1,6 +1,6 @@
 {
     "name": "@braqden/vencord-supportka",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "description": "Плагин supportka для Vencord: управление пользователями, быстрый вход в голосовые комнаты, автоматическая проверка профилей, система меток и встроенная памятка саппорта.",
     "license": "GPL-3.0-or-later",
     "author": "Braqden",
