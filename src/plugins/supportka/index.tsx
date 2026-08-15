@@ -13,68 +13,32 @@ import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
 import { debounce } from "@shared/debounce";
 import { classNameFactory } from "@utils/css";
-import { fetchUserProfile } from "@utils/discord";
-import { useAwaiter } from "@utils/react";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
-import { findByPropsLazy } from "@webpack";
-import { ChannelStore, createRoot, Forms, GuildMemberStore, GuildStore, Modal, openModal, PermissionsBits, PermissionStore, PresenceStore, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, useCallback, useEffect, useMemo, useRef, UserProfileStore, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
+import { createRoot, Forms, Modal, openModal, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, useCallback, useEffect, useMemo, useRef, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
 import { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
-import { runCheck } from "./check";
 import { startMascot, stopMascot } from "./mascot";
 import { DEFAULT_MEMO } from "./memo";
+import { OverlayOptions, OverlayRole, startOverlay, stopOverlay } from "./overlay";
 import { getSymbolImage } from "./symbols";
 
 const DEFAULT_BOY_CHANNEL = "852418390618275891";
 const DEFAULT_GIRL_CHANNEL = "853603250443780116";
 const DEFAULT_REJECT_CHANNEL = "852418435031498752";
 
-const DEFAULT_LOBBY_CHANNEL_ID = "1478896349142319204";
-const DEFAULT_JOIN_ROOMS = [
-    "1479082408543522917",
-    "1500878409394426008",
-    "1500878371762999457",
-    "1500878462070685696",
-    "1500878489899761684",
-    "1500878516508688505",
-    "1500878724147707994",
-    "1500878776572182738",
-    "1500878843903213609",
-    "1500878888455110818"
-].join(";");
-
-const GUILD_VOICE_TYPE = 2;
-const GUILD_STAGE_VOICE_TYPE = 13;
-
-const { selectVoiceChannel } = findByPropsLazy("selectVoiceChannel", "selectChannel");
+const DEFAULT_OVERLAY_ENTRIES = [
+    "848876547792306217|сапорт|0",
+    "848876541009592341|куратор|0",
+    "848876539000258572|администратор|0",
+    "852416528598040626|новичок|1"
+].join("\n");
 
 const COMMAND_TYPE = "vc-supportka";
 
-const ACCEPTED_KEY = "vc-supportka-status";
 const CHANNEL_CACHE_KEY = "vc-supportka-channels";
 const LAST_PROCESSED_KEY = "vc-supportka-last-processed";
-
-interface StatusEntry {
-    name?: string;
-    status: "accepted" | "rejected";
-    action?: string;
-    reason?: string;
-    time: number;
-}
-
-async function setStatus(userId: string, entry: StatusEntry) {
-    const map = (await DataStore.get<Record<string, StatusEntry>>(ACCEPTED_KEY)) ?? {};
-    map[userId] = entry;
-    await DataStore.set(ACCEPTED_KEY, map);
-}
-
-async function clearStatus(userId: string) {
-    const map = (await DataStore.get<Record<string, StatusEntry>>(ACCEPTED_KEY)) ?? {};
-    delete map[userId];
-    await DataStore.set(ACCEPTED_KEY, map);
-}
 
 const cl = classNameFactory("vc-supportka-");
 
@@ -83,7 +47,7 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         displayName: "Маскот (девочка)",
         description: "Девочка-персонаж, которая ходит по окну Discord. 3 быстрых клика открывают сайт замен. Выключи, чтобы убрать.",
-        default: true,
+        default: false,
         onChange: (v: boolean) => {
             if (v) startMascot();
             else stopMascot();
@@ -133,19 +97,32 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         displayName: "Выполнять команды",
         description: "Слушать релей-канал и выполнять команды от друга. Включи на своём аккаунте.",
-        default: false
-    },
-    checkProfile: {
-        type: OptionType.BOOLEAN,
-        displayName: "Проверять профиль",
-        description: "Автоматически проверять профиль на нарушения по чек-листу и показывать результат в попапе.",
         default: true
     },
-    markAccepted: {
+    overlayEnabled: {
         type: OptionType.BOOLEAN,
-        displayName: "Отмечать принятых",
-        description: "Автоматически помечать пользователя как принятого при нажатии Мальчик/Девочка. Также можно отметить вручную в профиле.",
-        default: true
+        displayName: "Значки ролей в оверлее",
+        description: "В игровом оверлее Discord показывать у участников голосового канала метку их роли (подпись + иконка роли).",
+        default: true,
+        onChange: (v: boolean) => {
+            if (v) startOverlay(buildOverlayOptions());
+            else stopOverlay();
+        }
+    },
+    overlayEntries: {
+        type: OptionType.STRING,
+        multiline: true,
+        displayName: "Оверлей: роли",
+        description: "Строки в формате: ID роли|подпись|0/1. 0 — подпись исчезнет через 3 сек, останется иконка роли; 1 — подпись остаётся навсегда.",
+        default: DEFAULT_OVERLAY_ENTRIES,
+        onChange: () => restartOverlay()
+    },
+    overlayBadgeColor: {
+        type: OptionType.STRING,
+        displayName: "Оверлей: цвет значка",
+        description: "Цвет фона значка (CSS-цвет).",
+        default: "#5865f2",
+        onChange: () => restartOverlay()
     },
     rejectPresets: {
         type: OptionType.STRING,
@@ -153,41 +130,11 @@ const settings = definePluginSettings({
         description: "Быстрые причины в окне «Отказ», разделяются ;",
         default: "АртёмВавилов;Запрещённая символика;Пропаганда наркотиков;Оскорбления;Ссылки без спойлера;Перезаходит в прихожую;Возраст"
     },
-    extraBannedWords: {
-        type: OptionType.STRING,
-        displayName: "Доп. запрещённые слова",
-        description: "Слова/фразы, которые считать нарушением (красный). Разделяются ;",
-        default: ""
-    },
-    extraAllowedLinks: {
-        type: OptionType.STRING,
-        displayName: "Разрешённые ссылки",
-        description: "Доп. домены/ключевые слова ссылок, которые не считаются нарушением. Разделяются ;",
-        default: ""
-    },
-    extraBannedLinks: {
-        type: OptionType.STRING,
-        displayName: "Ссылки для удаления",
-        description: "Доп. домены ссылок, которые нужно убрать полностью (красный). Разделяются ;",
-        default: ""
-    },
     showMemoButton: {
         type: OptionType.BOOLEAN,
         displayName: "Кнопка «Памятка»",
         description: "Показывать кнопку «Памятка» в верхней панели Discord (между «Почтой» и «Помощью»).",
         default: true
-    },
-    lobbyChannelId: {
-        type: OptionType.STRING,
-        displayName: "Прихожая",
-        description: "ID голосового канала «прихожая». Кнопка «Зайти» у друга сработает, только если он находится в прихожей — тогда его переместит к тебе в комнату.",
-        default: DEFAULT_LOBBY_CHANNEL_ID
-    },
-    joinVoiceRooms: {
-        type: OptionType.STRING,
-        displayName: "Румы для «Зайти»",
-        description: "Голосовые каналы, из которых выбирается свободный. Разделяются ;",
-        default: DEFAULT_JOIN_ROOMS
     },
     memoContent: {
         type: OptionType.STRING,
@@ -199,6 +146,33 @@ const settings = definePluginSettings({
 });
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function parseOverlayEntries(raw: string): OverlayRole[] {
+    return raw.split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+            const [roleId, label, persist] = line.split("|");
+            return {
+                roleId: (roleId ?? "").trim(),
+                label: (label ?? "").trim(),
+                persist: (persist ?? "").trim() === "1" || (persist ?? "").trim().toLowerCase() === "true"
+            };
+        })
+        .filter(entry => entry.roleId.length > 0);
+}
+
+function buildOverlayOptions(): OverlayOptions {
+    return {
+        roles: parseOverlayEntries(settings.store.overlayEntries),
+        badgeColor: settings.store.overlayBadgeColor
+    };
+}
+
+function restartOverlay() {
+    stopOverlay();
+    if (settings.store.overlayEnabled) startOverlay(buildOverlayOptions());
+}
 
 function setServerMute(guildId: string, userId: string, mute: boolean) {
     if (userId === UserStore.getCurrentUser().id) {
@@ -294,7 +268,7 @@ async function sendReject(userId: string, reason: string) {
 
 interface SupportCommand {
     type: string;
-    action: "boy" | "girl" | "mute" | "unmute" | "reject" | "move";
+    action: "boy" | "girl" | "mute" | "unmute" | "reject";
     user: string;
     guild?: string;
     reason?: string;
@@ -322,11 +296,9 @@ async function sendCommand(action: SupportCommand["action"], userId: string, gui
 function executeCommand(command: SupportCommand) {
     switch (command.action) {
         case "boy":
-            if (settings.store.markAccepted) void setStatus(command.user, { status: "accepted", action: "boy", time: Date.now() });
             void sendBoy(command.user);
             break;
         case "girl":
-            if (settings.store.markAccepted) void setStatus(command.user, { status: "accepted", action: "girl", time: Date.now() });
             void sendGirl(command.user);
             break;
         case "mute":
@@ -334,76 +306,8 @@ function executeCommand(command: SupportCommand) {
             if (command.guild) setServerMute(command.guild, command.user, command.action === "mute");
             break;
         case "reject":
-            if (command.reason) {
-                if (settings.store.markAccepted) void setStatus(command.user, { status: "rejected", reason: command.reason, time: Date.now() });
-                void sendReject(command.user, command.reason);
-            }
+            if (command.reason) void sendReject(command.user, command.reason);
             break;
-        case "move":
-            void moveControllerToMe(command.user);
-            break;
-    }
-}
-
-function moveControllerToMe(userId: string) {
-    const myId = UserStore.getCurrentUser().id;
-    const myState = VoiceStateStore.getVoiceStateForUser(myId);
-    if (!myState?.channelId || !myState.guildId) {
-        showToast("Сапортка: ты не в голосовом канале — друг не перемещён", Toasts.Type.FAILURE);
-        return;
-    }
-    const friendState = VoiceStateStore.getVoiceStateForUser(userId);
-    if (!friendState?.channelId) {
-        showToast("Сапортка: друг не в голосовом канале", Toasts.Type.FAILURE);
-        return;
-    }
-    const lobbyId = settings.store.lobbyChannelId?.trim();
-    if (lobbyId && friendState.channelId !== lobbyId) {
-        showToast("Сапортка: друг должен быть в прихожей, чтобы зайти к тебе", Toasts.Type.FAILURE);
-        return;
-    }
-    if (friendState.channelId === myState.channelId) {
-        showToast("Сапортка: друг уже с тобой в канале", Toasts.Type.SUCCESS);
-        return;
-    }
-    RestAPI.put({
-        url: `/guilds/${myState.guildId}/members/${userId}/voice`,
-        body: { channel_id: myState.channelId }
-    })
-        .then(() => showToast("Сапортка: друг перемещён к тебе", Toasts.Type.SUCCESS))
-        .catch(err => showToast(`Сапортка: не удалось переместить друга (${err?.response?.status ?? err?.message ?? "нет прав"})`, Toasts.Type.FAILURE));
-}
-
-function usersInChannel(channelId: string): number {
-    return Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId)).length;
-}
-
-function pickFreeChannel(): string | null {
-    const roomIds = settings.store.joinVoiceRooms.split(";").map(id => id.trim()).filter(Boolean);
-    let best: { id: string; users: number; } | null = null;
-    for (const id of roomIds) {
-        const channel = ChannelStore.getChannel(id);
-        if (!channel) continue;
-        if (channel.type !== GUILD_VOICE_TYPE && channel.type !== GUILD_STAGE_VOICE_TYPE) continue;
-        if (!PermissionStore.can(PermissionsBits.CONNECT, channel)) continue;
-        const users = usersInChannel(id);
-        if (channel.userLimit > 0 && users >= channel.userLimit) continue;
-        if (!best || users < best.users) best = { id, users };
-    }
-    return best?.id ?? null;
-}
-
-async function joinFreeChannel() {
-    const channelId = pickFreeChannel();
-    if (!channelId) {
-        showToast("Сапортка: нет свободных рум — проверь настройки или права", Toasts.Type.FAILURE);
-        return;
-    }
-    try {
-        selectVoiceChannel(channelId);
-        showToast("Сапортка: заходим в свободную руму", Toasts.Type.SUCCESS);
-    } catch {
-        showToast("Сапортка: не удалось зайти в руму", Toasts.Type.FAILURE);
     }
 }
 
@@ -483,13 +387,13 @@ function startPolling() {
     pollTimer = window.setInterval(() => void pollRelay(), 5000);
 }
 
-function openRejectModal(userId: string, guildId: string, controller: boolean, name?: string) {
+function openRejectModal(userId: string, guildId: string, controller: boolean) {
     openModal(props => (
-        <RejectModal userId={userId} guildId={guildId} controller={controller} name={name} modalProps={props} />
+        <RejectModal userId={userId} guildId={guildId} controller={controller} modalProps={props} />
     ));
 }
 
-function RejectModal({ modalProps, userId, guildId, controller, name }: { modalProps: RenderModalProps; userId: string; guildId: string; controller: boolean; name?: string; }) {
+function RejectModal({ modalProps, userId, guildId, controller }: { modalProps: RenderModalProps; userId: string; guildId: string; controller: boolean; }) {
     const [reason, setReason] = useState("");
 
     const presets = settings.store.rejectPresets
@@ -506,7 +410,6 @@ function RejectModal({ modalProps, userId, guildId, controller, name }: { modalP
         } else {
             void sendReject(userId, trimmed);
         }
-        if (settings.store.markAccepted) void setStatus(userId, { status: "rejected", reason: trimmed, name, time: Date.now() });
         modalProps.onClose();
     }
 
@@ -585,7 +488,6 @@ const SupportkaButtons = ErrorBoundary.wrap(
         };
 
         const onBoy = () => {
-            if (settings.store.markAccepted) void setStatus(user.id, { status: "accepted", action: "boy", name: user.globalName ?? user.username, time: Date.now() });
             if (controller) {
                 void sendCommand("boy", user.id, guildId);
             } else {
@@ -594,7 +496,6 @@ const SupportkaButtons = ErrorBoundary.wrap(
         };
 
         const onGirl = () => {
-            if (settings.store.markAccepted) void setStatus(user.id, { status: "accepted", action: "girl", name: user.globalName ?? user.username, time: Date.now() });
             if (controller) {
                 void sendCommand("girl", user.id, guildId);
             } else {
@@ -603,7 +504,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
         };
 
         const onReject = () => {
-            openRejectModal(user.id, guildId, controller, user.globalName ?? user.username);
+            openRejectModal(user.id, guildId, controller);
         };
 
         return (
@@ -647,145 +548,6 @@ const SupportkaButtons = ErrorBoundary.wrap(
                     Отказ
                 </Button>
             </Flex>
-        );
-    },
-    { noop: true }
-);
-
-const SupportkaCheck = ErrorBoundary.wrap(
-    (props: { user?: User; guildId?: string; }) => {
-        const { user } = props;
-        if (!user?.id || !settings.store.checkProfile) return null;
-
-        const [statusVersion, setStatusVersion] = useState(0);
-        const [statusMap] = useAwaiter(
-            () => DataStore.get<Record<string, StatusEntry>>(ACCEPTED_KEY),
-            { deps: [user.id, statusVersion], fallbackValue: null }
-        );
-
-        const [profile, , loading] = useAwaiter(
-            () => user.id
-                ? fetchUserProfile(user.id, props.guildId ? { guild_id: props.guildId } : undefined)
-                : Promise.resolve(null),
-            { deps: [user.id, props.guildId], fallbackValue: UserProfileStore.getUserProfile(user.id) ?? null }
-        );
-
-        const nick = useStateFromStores(
-            [GuildMemberStore],
-            () => props.guildId ? GuildMemberStore.getMember(props.guildId!, user.id)?.nick ?? null : null,
-            [props.guildId, user.id]
-        );
-
-        const activities = useStateFromStores(
-            [PresenceStore],
-            () => PresenceStore.getActivities(user.id),
-            [user.id]
-        );
-
-        const status = activities.find(a => a.type === 4)?.state;
-
-        const s = settings.store;
-
-        const violations = runCheck({
-            nick,
-            globalName: user.globalName,
-            status,
-            bio: profile?.bio,
-            pronouns: profile?.pronouns
-        }, {
-            bannedWords: s.extraBannedWords.split(";").map(v => v.trim()).filter(Boolean),
-            allowedLinks: s.extraAllowedLinks.split(";").map(v => v.trim()).filter(Boolean),
-            bannedLinks: s.extraBannedLinks.split(";").map(v => v.trim()).filter(Boolean)
-        });
-
-        const statusEntry = statusMap?.[user.id];
-        const isAccepted = statusEntry?.status === "accepted";
-        const isRejected = statusEntry?.status === "rejected";
-
-        const actionLabel = statusEntry?.action === "boy" ? "Мальчик"
-            : statusEntry?.action === "girl" ? "Девочка" : null;
-
-        const statusDate = statusEntry?.time
-            ? new Date(statusEntry.time).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })
-            : null;
-
-        const toggleStatus = async (entry?: StatusEntry) => {
-            if (entry) {
-                await clearStatus(user.id);
-            } else {
-                await setStatus(user.id, { status: "accepted", action: "manual", name: user.globalName ?? user.username, time: Date.now() });
-            }
-            setStatusVersion(v => v + 1);
-        };
-
-        const toggleRejected = async (entry?: StatusEntry) => {
-            if (entry) {
-                await clearStatus(user.id);
-            } else {
-                await setStatus(user.id, { status: "rejected", name: user.globalName ?? user.username, time: Date.now() });
-            }
-            setStatusVersion(v => v + 1);
-        };
-
-        return (
-            <div className={cl("check")}>
-                <Flex flexDirection="row" gap={6} style={{ marginBottom: 6 }}>
-                    {isAccepted || isRejected ? (
-                        <Button
-                            variant={isAccepted ? "positive" : "dangerPrimary"}
-                            size="small"
-                            className={isAccepted ? cl("accepted") : cl("rejected")}
-                            style={{ flex: 1 }}
-                            onClick={() => void (isAccepted ? toggleStatus(statusEntry) : toggleRejected(statusEntry))}
-                        >
-                            {isAccepted
-                                ? `Принят${actionLabel ? ` (${actionLabel})` : ""}${statusDate ? ` ${statusDate}` : ""} — снять`
-                                : `Отклонён${statusDate ? ` ${statusDate}` : ""} — снять`}
-                        </Button>
-                    ) : (
-                        <>
-                            <Button
-                                variant="secondary"
-                                size="small"
-                                className={cl("accept")}
-                                style={{ flex: 1 }}
-                                onClick={() => void toggleStatus()}
-                            >
-                                Принят
-                            </Button>
-                            <Button
-                                variant="secondary"
-                                size="small"
-                                className={cl("reject")}
-                                style={{ flex: 1 }}
-                                onClick={() => void toggleRejected()}
-                            >
-                                Отклонён
-                            </Button>
-                        </>
-                    )}
-                </Flex>
-                <Forms.FormTitle tag="h5" className={cl("check-title")}>Проверка профиля</Forms.FormTitle>
-                {loading ? (
-                    <span className={cl("check-loading")}>Проверка...</span>
-                ) : violations.length === 0 ? (
-                    <span className={cl("check-ok")}>Нарушений не найдено</span>
-                ) : (
-                    <div className={cl("check-list")}>
-                        {violations.map((violation, i) => (
-                            <div
-                                key={i}
-                                className={violation.severity === "error" ? cl("check-item-error") : cl("check-item-warn")}
-                            >
-                                <span className={cl("check-field")}>{violation.field}:</span> {violation.message}
-                            </div>
-                        ))}
-                    </div>
-                )}
-                <Forms.FormText className={cl("check-note")}>
-                    Аватар и копирование профиля автоматически не проверяются
-                </Forms.FormText>
-            </div>
         );
     },
     { noop: true }
@@ -1305,117 +1067,10 @@ function stopMemoButton() {
     closeMemoWindow();
 }
 
-// --- Кнопка «Зайти» рядом с названием сервера ---
-
-const JOIN_BUTTON_CLASS = cl("join-btn");
-const JOIN_ICON_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>';
-
-let joinObserver: MutationObserver | null = null;
-let joinButton: HTMLButtonElement | null = null;
-let joinRetryTimer: number | undefined;
-
-function findHeaderIconsRow(container: HTMLElement, nameButton: HTMLElement): HTMLElement | null {
-    for (const child of Array.from(container.children)) {
-        if (child === nameButton) continue;
-        const el = child as HTMLElement;
-        if (el.tagName === "BUTTON") continue;
-        if (el.querySelector("button")) return el;
-    }
-    if (container.querySelectorAll(":scope > button").length >= 2) return container;
-    return null;
-}
-
-function findGuildHeaderNameButton(): HTMLElement | null {
-    const guildId = SelectedGuildStore.getGuildId();
-    if (!guildId) return null;
-    const name = GuildStore.getGuild(guildId)?.name?.trim();
-    if (!name) return null;
-    const nameLower = name.toLowerCase();
-
-    let fallback: HTMLElement | null = null;
-    for (const btn of document.querySelectorAll<HTMLElement>("button, [role='button']")) {
-        if (btn.offsetParent === null) continue;
-        const text = (btn.textContent ?? "").trim();
-        const label = (btn.getAttribute("aria-label") ?? btn.getAttribute("title") ?? "").trim().toLowerCase();
-        if (text !== name && text.toLowerCase() !== nameLower && !label.includes(nameLower)) continue;
-        if (!fallback) fallback = btn;
-        let el: HTMLElement | null = btn;
-        while (el) {
-            const cls = typeof el.className === "string" ? el.className : "";
-            if (cls.includes("sidebar") || cls.includes("mainContent") || cls.includes("titleBar") || cls.includes("children")) {
-                return btn;
-            }
-            el = el.parentElement;
-        }
-    }
-    return fallback;
-}
-
-function onJoinClick() {
-    const meId = UserStore.getCurrentUser().id;
-    const lobbyId = settings.store.lobbyChannelId?.trim();
-    if (settings.store.sendCommands) {
-        const myVoice = VoiceStateStore.getVoiceStateForUser(meId);
-        if (lobbyId && myVoice?.channelId !== lobbyId) {
-            showToast("Сапортка: чтобы зайти к саппорту, сначала зайди в прихожую", Toasts.Type.FAILURE);
-            return;
-        }
-        void sendCommand("move", meId, SelectedGuildStore.getGuildId() ?? "");
-    } else {
-        void joinFreeChannel();
-    }
-}
-
-function ensureJoinButton() {
-    if (joinButton?.isConnected) return;
-    const nameButton = findGuildHeaderNameButton();
-    if (!nameButton?.parentElement) return;
-    joinButton?.remove();
-    joinButton = null;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = JOIN_BUTTON_CLASS;
-    const title = settings.store.sendCommands
-        ? "Зайти к саппорту (переместит в его комнату)"
-        : "Зайти в свободную руму";
-    btn.title = title;
-    btn.setAttribute("aria-label", title);
-    btn.innerHTML = JOIN_ICON_SVG;
-    btn.addEventListener("click", () => void onJoinClick());
-
-    const parent = nameButton.parentElement;
-    const iconsRow = findHeaderIconsRow(parent, nameButton);
-    if (iconsRow && iconsRow !== parent) {
-        iconsRow.insertBefore(btn, iconsRow.firstChild);
-    } else {
-        nameButton.insertAdjacentElement("afterend", btn);
-    }
-    joinButton = btn;
-}
-
-const scheduleJoinButton = debounce(ensureJoinButton, 300);
-
-function startJoinButton() {
-    ensureJoinButton();
-    joinObserver = new MutationObserver(scheduleJoinButton);
-    joinObserver.observe(document.body, { childList: true, subtree: true });
-    joinRetryTimer = window.setInterval(ensureJoinButton, 3000);
-}
-
-function stopJoinButton() {
-    joinObserver?.disconnect();
-    joinObserver = null;
-    if (joinRetryTimer) window.clearInterval(joinRetryTimer);
-    joinRetryTimer = undefined;
-    joinButton?.remove();
-    joinButton = null;
-}
-
 export default definePlugin({
     name: "supportka",
-    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Кнопка «Зайти» рядом с названием сервера: у тебя закидывает в свободную руму, у друга — перемещает его к тебе в комнату (друг должен быть в прихожей). Умеет управлять через друга по командам в релей-канале.",
-    searchTerms: ["сапортка", "мальчик", "девочка", "отказ", "мьют", "зайти", "переместить"],
+    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Значки ролей в игровом оверлее Discord. Умеет управлять через друга по командам в релей-канале.",
+    searchTerms: ["сапортка", "мальчик", "девочка", "отказ", "мьют", "оверлей", "overlay"],
     tags: ["Voice", "Utility"],
     enabledByDefault: true,
     authors: [{
@@ -1427,14 +1082,14 @@ export default definePlugin({
     start() {
         startPolling();
         startMemoButton();
-        startJoinButton();
+        if (settings.store.overlayEnabled) startOverlay(buildOverlayOptions());
         if (settings.store.mascotEnabled) startMascot();
     },
     stop() {
         if (pollTimer) window.clearInterval(pollTimer);
         pollTimer = undefined;
         stopMemoButton();
-        stopJoinButton();
+        stopOverlay();
         stopMascot();
     },
 
@@ -1450,11 +1105,10 @@ export default definePlugin({
             find: '"UserProfilePopout");',
             replacement: {
                 match: /userId:\i\.id,guild:\i\}\)(?=])/,
-                replace: "$&,$self.SupportkaButtons(arguments[0]),$self.SupportkaCheck(arguments[0])"
+                replace: "$&,$self.SupportkaButtons(arguments[0])"
             }
         }
     ],
 
-    SupportkaButtons,
-    SupportkaCheck
+    SupportkaButtons
 });

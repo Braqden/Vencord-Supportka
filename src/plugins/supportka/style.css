@@ -34,70 +34,6 @@
     background-color: #d83b8f;
 }
 
-.vc-supportka-check {
-    background: var(--background-secondary);
-    border: 1px solid var(--background-modifier-accent);
-    border-radius: 8px;
-    padding: 10px 12px;
-}
-
-.vc-supportka-check-title {
-    margin: 0 0 4px !important;
-}
-
-.vc-supportka-check-ok {
-    color: #23a55a;
-    font-weight: 600;
-}
-
-.vc-supportka-check-loading {
-    color: var(--text-muted);
-}
-
-.vc-supportka-check-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.vc-supportka-check-item-error {
-    color: #f23f43;
-    font-size: 13px;
-    line-height: 1.2;
-}
-
-.vc-supportka-check-item-warn {
-    color: #f0b232;
-    font-size: 13px;
-    line-height: 1.2;
-}
-
-.vc-supportka-check-field {
-    font-weight: 600;
-}
-
-.vc-supportka-check-note {
-    margin-top: 6px !important;
-    color: var(--text-muted);
-    font-size: 11px !important;
-}
-
-.vc-supportka-accepted {
-    font-weight: 600;
-}
-
-.vc-supportka-accept {
-    color: var(--text-normal);
-}
-
-.vc-supportka-rejected {
-    font-weight: 600;
-}
-
-.vc-supportka-reject {
-    color: var(--text-normal);
-}
-
 .vc-supportka-presets {
     display: flex;
     flex-wrap: wrap;
@@ -132,34 +68,6 @@
 }
 
 .vc-supportka-titlebar-btn svg {
-    width: 20px;
-    height: 20px;
-}
-
-.vc-supportka-join-btn {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 40px;
-    margin: 0;
-    padding: 0;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: #b5bac1;
-    cursor: pointer;
-    line-height: 0;
-    transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.vc-supportka-join-btn:hover {
-    background: rgb(255 255 255 / 8%);
-    color: #f2f3f5;
-}
-
-.vc-supportka-join-btn svg {
     width: 20px;
     height: 20px;
 }
