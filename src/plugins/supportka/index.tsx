@@ -5,7 +5,6 @@
  */
 
 import "./style.css";
-import "./probe";
 
 import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
