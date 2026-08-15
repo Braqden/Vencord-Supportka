@@ -19,7 +19,6 @@ import { createRoot, Forms, Modal, openModal, RestAPI, SelectedGuildStore, showT
 import { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
-import { startMascot, stopMascot } from "./mascot";
 import { DEFAULT_MEMO } from "./memo";
 import { OverlayOptions, OverlayRole, startOverlay, stopOverlay } from "./overlay";
 import { getSymbolImage } from "./symbols";
@@ -28,12 +27,21 @@ const DEFAULT_BOY_CHANNEL = "852418390618275891";
 const DEFAULT_GIRL_CHANNEL = "853603250443780116";
 const DEFAULT_REJECT_CHANNEL = "852418435031498752";
 
+const DEFAULT_RELAY_GUILD_ID = "1535963962053632120";
+const DEFAULT_RELAY_CHANNEL_ID = "1535964031276294235";
+const DEFAULT_CONTROLLER_ID = "611522379776000001";
+
+const DEFAULT_OVERLAY_GUILD_ID = "254958490676625408";
+
 const DEFAULT_OVERLAY_ENTRIES = [
     "848876547792306217|сапорт|0",
     "848876541009592341|куратор|0",
     "848876539000258572|администратор|0",
     "852416528598040626|новичок|1"
 ].join("\n");
+
+const OLD_REJECT_PRESETS = "АртёмВавилов;Запрещённая символика;Пропаганда наркотиков;Оскорбления;Ссылки без спойлера;Перезаходит в прихожую;Возраст";
+const DEFAULT_REJECT_PRESETS = "Молчит в войсе, в лс отписано;АртёмВавилов;12 лет, ;Оскорбляет";
 
 const COMMAND_TYPE = "vc-supportka";
 
@@ -43,67 +51,41 @@ const LAST_PROCESSED_KEY = "vc-supportka-last-processed";
 const cl = classNameFactory("vc-supportka-");
 
 const settings = definePluginSettings({
-    mascotEnabled: {
-        type: OptionType.BOOLEAN,
-        displayName: "Маскот (девочка)",
-        description: "Девочка-персонаж, которая ходит по окну Discord. 3 быстрых клика открывают сайт замен. Выключи, чтобы убрать.",
-        default: false,
-        onChange: (v: boolean) => {
-            if (v) startMascot();
-            else stopMascot();
-        }
-    },
-    relayChannelId: {
-        type: OptionType.STRING,
-        description: "Канал, в который отправляются команды (релей-канал)",
-        default: "1535964031276294235"
-    },
-    relayGuildId: {
-        type: OptionType.STRING,
-        displayName: "Сервер релея",
-        description: "Сервер, в котором создаются каналы «мальчик/девочка/отказ», если их не нашли автоматически",
-        default: "1535963962053632120"
-    },
     boyChannelId: {
         type: OptionType.STRING,
         displayName: "Канал «Мальчик»",
-        description: "Канал, куда отправляется сообщение при нажатии Мальчик. Если канала нет — создастся автоматически.",
+        description: "Канал, куда отправляется сообщение при нажатии Мальчик.",
         default: DEFAULT_BOY_CHANNEL
     },
     girlChannelId: {
         type: OptionType.STRING,
         displayName: "Канал «Девочка»",
-        description: "Канал, куда отправляется сообщение при нажатии Девочка. Если канала нет — создастся автоматически.",
+        description: "Канал, куда отправляется сообщение при нажатии Девочка.",
         default: DEFAULT_GIRL_CHANNEL
     },
     rejectChannelId: {
         type: OptionType.STRING,
         displayName: "Канал «Отказ»",
-        description: "Канал, куда отправляется сообщение при нажатии Отказ. Если канала нет — создастся автоматически.",
+        description: "Канал, куда отправляется сообщение при нажатии Отказ.",
         default: DEFAULT_REJECT_CHANNEL
-    },
-    controllerId: {
-        type: OptionType.STRING,
-        description: "ID друга, команды которого нужно выполнять",
-        default: "611522379776000001"
     },
     sendCommands: {
         type: OptionType.BOOLEAN,
         displayName: "Отправлять команды",
-        description: "Отправлять команды в релей-канал вместо выполнения напрямую. Включи на аккаунте друга.",
+        description: "Не включать — вам это не нужно, оно всё равно работать не будет.",
         default: false
     },
     executeCommands: {
         type: OptionType.BOOLEAN,
         displayName: "Выполнять команды",
-        description: "Слушать релей-канал и выполнять команды от друга. Включи на своём аккаунте.",
-        default: true
+        description: "Не включать — вам это не нужно, оно всё равно работать не будет.",
+        default: false
     },
     overlayEnabled: {
         type: OptionType.BOOLEAN,
-        displayName: "Значки ролей в оверлее",
-        description: "В игровом оверлее Discord показывать у участников голосового канала метку их роли (подпись + иконка роли).",
-        default: true,
+        displayName: "Значки ролей в оверлее (в разработке)",
+        description: "В игровом оверлее Discord показывать у участников голосового канала метку их роли. Функция пока нестабильна и находится в разработке.",
+        default: false,
         onChange: (v: boolean) => {
             if (v) startOverlay(buildOverlayOptions());
             else stopOverlay();
@@ -117,18 +99,11 @@ const settings = definePluginSettings({
         default: DEFAULT_OVERLAY_ENTRIES,
         onChange: () => restartOverlay()
     },
-    overlayBadgeColor: {
-        type: OptionType.STRING,
-        displayName: "Оверлей: цвет значка",
-        description: "Цвет фона значка (CSS-цвет).",
-        default: "#5865f2",
-        onChange: () => restartOverlay()
-    },
     rejectPresets: {
         type: OptionType.STRING,
         displayName: "Пресеты причин отказа",
         description: "Быстрые причины в окне «Отказ», разделяются ;",
-        default: "АртёмВавилов;Запрещённая символика;Пропаганда наркотиков;Оскорбления;Ссылки без спойлера;Перезаходит в прихожую;Возраст"
+        default: DEFAULT_REJECT_PRESETS
     },
     showMemoButton: {
         type: OptionType.BOOLEAN,
@@ -164,8 +139,8 @@ function parseOverlayEntries(raw: string): OverlayRole[] {
 
 function buildOverlayOptions(): OverlayOptions {
     return {
-        roles: parseOverlayEntries(settings.store.overlayEntries),
-        badgeColor: settings.store.overlayBadgeColor
+        guildId: DEFAULT_OVERLAY_GUILD_ID,
+        roles: parseOverlayEntries(settings.store.overlayEntries)
     };
 }
 
@@ -221,7 +196,7 @@ async function resolveTargetChannel(type: TargetChannel): Promise<string | null>
 
     try {
         const { body } = await RestAPI.post({
-            url: `/guilds/${settings.store.relayGuildId}/channels`,
+            url: `/guilds/${DEFAULT_RELAY_GUILD_ID}/channels`,
             body: { name: CHANNEL_NAMES[type], type: 0 }
         });
         cache[type] = body.id;
@@ -286,7 +261,7 @@ function buildCommand(action: SupportCommand["action"], userId: string, guildId:
 
 async function sendCommand(action: SupportCommand["action"], userId: string, guildId: string, reason?: string) {
     try {
-        await sendRawMessage(settings.store.relayChannelId, buildCommand(action, userId, guildId, reason));
+        await sendRawMessage(DEFAULT_RELAY_CHANNEL_ID, buildCommand(action, userId, guildId, reason));
         showToast("Команда отправлена Brqden_", Toasts.Type.SUCCESS);
     } catch {
         showToast("Не удалось отправить команду (нет доступа к релей-каналу?)", Toasts.Type.FAILURE);
@@ -331,7 +306,7 @@ function markProcessed(channelId: string, messageId?: string) {
 }
 
 function handleRelayMessage(message: { id?: string; channel_id?: string; content?: string; author?: { id?: string; }; }) {
-    if (message.channel_id !== settings.store.relayChannelId) return;
+    if (message.channel_id !== DEFAULT_RELAY_CHANNEL_ID) return;
     if (!message.content?.startsWith(`{"type":"${COMMAND_TYPE}"`)) return;
     if (isAlreadyProcessed(message.channel_id, message.id)) return;
     markProcessed(message.channel_id, message.id);
@@ -342,8 +317,8 @@ function handleRelayMessage(message: { id?: string; channel_id?: string; content
         showToast("Сапортка: получена команда, но «Выполнять команды» выключено", Toasts.Type.FAILURE);
         return;
     }
-    if (message.author?.id !== settings.store.controllerId) {
-        showToast(`Сапортка: команда от неизвестного (${message.author?.id}), ожидался ${settings.store.controllerId}`, Toasts.Type.FAILURE);
+    if (message.author?.id !== DEFAULT_CONTROLLER_ID) {
+        showToast(`Сапортка: команда от неизвестного (${message.author?.id}), ожидался ${DEFAULT_CONTROLLER_ID}`, Toasts.Type.FAILURE);
         return;
     }
 
@@ -371,7 +346,7 @@ async function pollRelay() {
     pollInFlight = true;
     try {
         const { body } = await RestAPI.get({
-            url: `/channels/${settings.store.relayChannelId}/messages?limit=10`
+            url: `/channels/${DEFAULT_RELAY_CHANNEL_ID}/messages?limit=10`
         });
         for (const message of body) handleRelayMessage(message);
     } catch {
@@ -513,7 +488,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
                     variant="secondary"
                     size="medium"
                     className={cl("mute")}
-                    style={{ width: "100%" }}
+                    style={{ width: "100%", backgroundColor: "#3f4147", borderColor: "transparent", color: "#f2f3f5" }}
                     onClick={onMute}
                     disabled={!inVoice}
                 >
@@ -524,7 +499,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
                         variant="primary"
                         size="medium"
                         className={cl("boy")}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, backgroundColor: "#3b82f6", borderColor: "transparent", color: "#fff" }}
                         onClick={onBoy}
                     >
                         Мальчик
@@ -533,7 +508,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
                         variant="primary"
                         size="medium"
                         className={cl("girl")}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, backgroundColor: "#eb459e", borderColor: "transparent", color: "#fff" }}
                         onClick={onGirl}
                     >
                         Девочка
@@ -542,7 +517,8 @@ const SupportkaButtons = ErrorBoundary.wrap(
                 <Button
                     variant="dangerSecondary"
                     size="medium"
-                    style={{ width: "100%" }}
+                    className={cl("reject")}
+                    style={{ width: "100%", backgroundColor: "#f23f43", borderColor: "transparent", color: "#fff" }}
                     onClick={onReject}
                 >
                     Отказ
@@ -1069,7 +1045,7 @@ function stopMemoButton() {
 
 export default definePlugin({
     name: "supportka",
-    description: "Кнопки сапортки в профиле пользователя: Замутить/Размутить, Мальчик, Девочка и Отказ с причиной. Значки ролей в игровом оверлее Discord. Умеет управлять через друга по командам в релей-канале.",
+    description: "Сапорта: реально крутая вещь для сапортов Lounge",
     searchTerms: ["сапортка", "мальчик", "девочка", "отказ", "мьют", "оверлей", "overlay"],
     tags: ["Voice", "Utility"],
     enabledByDefault: true,
@@ -1080,17 +1056,18 @@ export default definePlugin({
     settings,
 
     start() {
+        if (settings.store.rejectPresets === OLD_REJECT_PRESETS) {
+            settings.store.rejectPresets = DEFAULT_REJECT_PRESETS;
+        }
         startPolling();
         startMemoButton();
         if (settings.store.overlayEnabled) startOverlay(buildOverlayOptions());
-        if (settings.store.mascotEnabled) startMascot();
     },
     stop() {
         if (pollTimer) window.clearInterval(pollTimer);
         pollTimer = undefined;
         stopMemoButton();
         stopOverlay();
-        stopMascot();
     },
 
     flux: {
