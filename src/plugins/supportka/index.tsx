@@ -748,6 +748,80 @@ function MemoBody({ content }: { content: string }) {
     return <>{nodes}</>;
 }
 
+function parseMemoColor(c: string): [number, number, number] | null {
+    const v = c.trim();
+    if (!v) return null;
+    if (v.startsWith("#")) {
+        let h = v.slice(1);
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+        const n = parseInt(h, 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    if (v.startsWith("rgb")) {
+        const m = v.match(/[\d.]+/g);
+        if (!m || m.length < 3) return null;
+        return [Math.min(255, Number(m[0])), Math.min(255, Number(m[1])), Math.min(255, Number(m[2]))];
+    }
+    return null;
+}
+
+function memoLuminance([r, g, b]: [number, number, number]): number {
+    const f = (v: number) => {
+        v /= 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function memoContrast(a: [number, number, number], b: [number, number, number]): number {
+    const l1 = memoLuminance(a);
+    const l2 = memoLuminance(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+const MEMO_FALLBACK_COLORS = {
+    dark: {
+        text: "#ffffff",
+        header: "#ffffff",
+        muted: "#a9adb4",
+        interactive: "#d4d7dc",
+        interactiveMuted: "#949ba4",
+        link: "#00a8fc",
+    },
+    light: {
+        text: "#000000",
+        header: "#000000",
+        muted: "#6b6f78",
+        interactive: "#4e5058",
+        interactiveMuted: "#80848e",
+        link: "#005bd6",
+    },
+} as const;
+
+type MemoColorKey = keyof typeof MEMO_FALLBACK_COLORS.dark;
+
+function applyMemoTheme(win: HTMLElement) {
+    const cs = getComputedStyle(win);
+    const bgColor =
+        parseMemoColor(cs.getPropertyValue("--background-tertiary").trim()) ??
+        parseMemoColor(cs.getPropertyValue("--background-secondary").trim()) ??
+        [31, 31, 34] as [number, number, number];
+    const fallback = memoLuminance(bgColor) > 0.5 ? MEMO_FALLBACK_COLORS.light : MEMO_FALLBACK_COLORS.dark;
+    const checks: Array<[string, string, MemoColorKey]> = [
+        ["--text-normal", "--vc-supportka-memo-text", "text"],
+        ["--header-primary", "--vc-supportka-memo-header", "header"],
+        ["--text-muted", "--vc-supportka-memo-text-muted", "muted"],
+        ["--interactive-normal", "--vc-supportka-memo-interactive", "interactive"],
+        ["--interactive-muted", "--vc-supportka-memo-interactive-muted", "interactiveMuted"],
+        ["--text-link", "--vc-supportka-memo-link", "link"],
+    ];
+    for (const [srcVar, dstVar, key] of checks) {
+        const col = parseMemoColor(cs.getPropertyValue(srcVar).trim());
+        win.style.setProperty(dstVar, col && memoContrast(col, bgColor) >= 3.5 ? `var(${srcVar})` : fallback[key]);
+    }
+}
+
 function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void; initialPos: MemoPos; initialSize: { width: number; height: number; }; }) {
     const [pos, setPos] = useState<MemoPos>(initialPos);
     const posRef = useRef(initialPos);
@@ -758,6 +832,25 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
     const drag = useRef<{ sx: number; sy: number; bx: number; by: number; } | null>(null);
     const resize = useRef<{ sx: number; sy: number; sw: number; sh: number; dir: string; } | null>(null);
     const winRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const win = winRef.current;
+        if (!win) return;
+        applyMemoTheme(win);
+        let timer: number | null = null;
+        const schedule = () => {
+            if (timer !== null) window.clearTimeout(timer);
+            timer = window.setTimeout(() => applyMemoTheme(win), 150);
+        };
+        const mo = new MutationObserver(schedule);
+        mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
+        if (document.body) mo.observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
+        if (document.head) mo.observe(document.head, { childList: true });
+        return () => {
+            mo.disconnect();
+            if (timer !== null) window.clearTimeout(timer);
+        };
+    }, []);
 
     useEffect(() => {
         posRef.current = pos;
