@@ -57,3 +57,7 @@ jobs:
             vencord/dist/renderer.css
             vencord/dist/preload.js
             vencord/dist/patcher.js
+            vencord/dist/vencordDesktopMain.js
+            vencord/dist/vencordDesktopPreload.js
+            vencord/dist/vencordDesktopRenderer.js
+            vencord/dist/vencordDesktopRenderer.css

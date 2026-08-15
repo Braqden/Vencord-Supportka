@@ -2,6 +2,12 @@ node_modules/
 dist/*
 !dist/renderer.js
 !dist/renderer.css
+!dist/preload.js
+!dist/patcher.js
+!dist/vencordDesktopMain.js
+!dist/vencordDesktopPreload.js
+!dist/vencordDesktopRenderer.js
+!dist/vencordDesktopRenderer.css
 Vencord/
 .symbol-resized/
 *.log

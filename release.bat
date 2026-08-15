@@ -41,12 +41,20 @@ copy /y "G:\плагин\dist\renderer.js" "Vencord\dist\renderer.js" >nul
 copy /y "G:\плагин\dist\renderer.css" "Vencord\dist\renderer.css" >nul
 copy /y "G:\плагин\dist\preload.js" "Vencord\dist\preload.js" >nul
 copy /y "G:\плагин\dist\patcher.js" "Vencord\dist\patcher.js" >nul
+copy /y "G:\плагин\dist\vencordDesktopMain.js" "Vencord\dist\vencordDesktopMain.js" >nul
+copy /y "G:\плагин\dist\vencordDesktopPreload.js" "Vencord\dist\vencordDesktopPreload.js" >nul
 copy /y "G:\плагин\dist\vencordDesktopRenderer.js" "Vencord\dist\vencordDesktopRenderer.js" >nul
 copy /y "G:\плагин\dist\vencordDesktopRenderer.css" "Vencord\dist\vencordDesktopRenderer.css" >nul
 
 echo [4/5] Updating tracked dist for manual installs...
 copy /y "G:\плагин\dist\renderer.js" "dist\renderer.js" >nul
 copy /y "G:\плагин\dist\renderer.css" "dist\renderer.css" >nul
+copy /y "G:\плагин\dist\preload.js" "dist\preload.js" >nul
+copy /y "G:\плагин\dist\patcher.js" "dist\patcher.js" >nul
+copy /y "G:\плагин\dist\vencordDesktopMain.js" "dist\vencordDesktopMain.js" >nul
+copy /y "G:\плагин\dist\vencordDesktopPreload.js" "dist\vencordDesktopPreload.js" >nul
+copy /y "G:\плагин\dist\vencordDesktopRenderer.js" "dist\vencordDesktopRenderer.js" >nul
+copy /y "G:\плагин\dist\vencordDesktopRenderer.css" "dist\vencordDesktopRenderer.css" >nul
 
 echo [5/5] Committing, tagging and pushing...
 git add -A
