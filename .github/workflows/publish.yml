@@ -1,4 +1,4 @@
-name: Publish package to GitHub Packages
+name: Build and Release
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,10 +22,38 @@ jobs:
           node-version: 22
           registry-url: https://npm.pkg.github.com/
 
-      - name: Set version from tag
-        run: node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.env.GITHUB_REF_NAME.replace(/^v/,'');fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+      - name: Clone Vencord
+        run: |
+          git clone --depth 1 https://github.com/Vendicated/Vencord.git vencord
+          cd vencord
+          git fetch --depth 1 origin v1.15.1
+          git checkout v1.15.1
+          corepack enable
+          pnpm install --frozen-lockfile
 
-      - name: Publish
-        run: npm publish
+      - name: Copy plugin
+        run: cp -r src/plugins/supportka vencord/src/plugins/supportka
+
+      - name: Build standalone
+        env:
+          VENCORD_REMOTE: Braqden/Vencord-Supportka
+          VENCORD_HASH: ${{ github.ref_name }}
+        run: |
+          cd vencord
+          pnpm build --standalone
+
+      - name: Publish to GitHub Packages
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.env.GITHUB_REF_NAME.replace(/^v/,'');fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+          npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            vencord/dist/renderer.js
+            vencord/dist/renderer.css
+            vencord/dist/preload.js
+            vencord/dist/patcher.js

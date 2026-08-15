@@ -30,6 +30,10 @@ const FADE_DELAY = 3000;
 let options: OverlayOptions | null = null;
 let observer: MutationObserver | null = null;
 let scanTimer: number | undefined;
+let scanInterval: number | undefined;
+let scanning = false;
+
+const SCAN_INTERVAL = 5000;
 
 const roleCache = new Map<string, string[]>();
 const fadeAt = new Map<string, number>();
@@ -37,8 +41,17 @@ const roleIconCache = new Map<string, { url?: string; emoji?: string; } | null>(
 const guildRolesCache = new Map<string, { at: number; roles: Map<string, { name: string; icon: string | null; }> | null; }>();
 const toastTimes = new Map<string, number>();
 
+const OVERLAY_SENTINEL_ID = "__OVERLAY__SENTINEL__";
+
 function isOverlay(): boolean {
-    return Boolean(window.__OVERLAY__);
+    try {
+        if (window.__OVERLAY__) return true;
+        if (document.getElementById(OVERLAY_SENTINEL_ID)) return true;
+        if (/overlay/i.test(window.location.href ?? "")) return true;
+    } catch (e) {
+        logger.warn("isOverlay: не удалось определить окружение:", e);
+    }
+    return false;
 }
 
 function where(): string {
@@ -563,6 +576,18 @@ function findAvatarUsers(): string[] {
 }
 
 async function scan(): Promise<void> {
+    if (!options || scanning) return;
+    scanning = true;
+    try {
+        await doScan();
+    } catch (e) {
+        logger.warn("scan ошибка:", e);
+    } finally {
+        scanning = false;
+    }
+}
+
+async function doScan(): Promise<void> {
     if (!options) return;
 
     let myId: string | undefined;
@@ -581,13 +606,13 @@ async function scan(): Promise<void> {
 
     if (!voice.guildId || !voice.channelId) {
         logger.warn("Нет голосового состояния", voice.detail);
-        if (!overlay) throttledToast("nvoice", `supportka [main]: ты не в голосовом канале (${voice.detail})`);
+        if (!overlay) throttledToast("nvoice", `supportka [main]: ты не в голосовом канале (${voice.detail})`, 15000);
         return;
     }
 
     if (voice.guildId !== options.guildId) {
         logger.info(`Сервер ${voice.guildId} не является целевым (${options.guildId})`);
-        if (!overlay) throttledToast("wrongguild", `supportka [main]: значки только для сервера ${options.guildId} (сейчас: ${voice.guildId})`);
+        if (!overlay) throttledToast("wrongguild", `supportka [main]: значки только для сервера ${options.guildId} (сейчас: ${voice.guildId})`, 15000);
         return;
     }
 
@@ -609,7 +634,7 @@ async function scan(): Promise<void> {
             logger.info(`Участники: сторы пусты, из аватаров DOM: ${memberIds.length}`);
         }
         if (!memberIds.length) {
-            throttledToast("nochan", `supportka [${where()}]: в канале никого нет`);
+            throttledToast("nochan", `supportka [${where()}]: в канале никого нет`, 15000);
             return;
         }
 
@@ -637,20 +662,21 @@ async function scan(): Promise<void> {
         throttledToast("push", `supportka [main]: оверлей: отправлено данных (значков: ${members.filter(m => m.label).length})`);
     }
 
-    let matched = 0;
-    for (const member of members) {
-        if (member.label) {
-            matched++;
-            await applyBadge(member);
-        } else {
-            removeBadgesFor(member);
+    if (overlay) {
+        let matched = 0;
+        for (const member of members) {
+            if (member.label) {
+                matched++;
+                await applyBadge(member);
+            } else {
+                removeBadgesFor(member);
+            }
+            if (member.uid === myId && member.label) {
+                throttledToast(`me:${member.uid}`, `supportka [overlay]: я=${member.uid}, значок=${member.label}`);
+            }
         }
-        if (member.uid === myId && member.label) {
-            throttledToast(`me:${member.uid}`, `supportka [${where()}]: я=${member.uid}, значок=${member.label}`);
-        }
+        throttledToast("summary", `supportka [overlay]: в канале ${members.length}, совпадений ${matched}`);
     }
-
-    throttledToast("summary", `supportka [${where()}]: в канале ${members.length}, совпадений ${matched}`);
 }
 
 function scheduleScan(): void {
@@ -692,6 +718,12 @@ export function startOverlay(opts: OverlayOptions): void {
         attributeFilter: ["src"]
     });
     scheduleScan();
+    startScanning();
+}
+
+function startScanning(): void {
+    if (scanInterval) return;
+    scanInterval = window.setInterval(() => void scan(), SCAN_INTERVAL);
 }
 
 export function stopOverlay(): void {
@@ -702,6 +734,10 @@ export function stopOverlay(): void {
         window.clearTimeout(scanTimer);
         scanTimer = undefined;
     }
+    if (scanInterval) {
+        window.clearInterval(scanInterval);
+        scanInterval = undefined;
+    }
     document.querySelectorAll<HTMLElement>(`[${BADGE_ATTR}]`).forEach(badge => badge.remove());
     try {
         overlayChannel?.close();
@@ -711,4 +747,5 @@ export function stopOverlay(): void {
     overlayChannel = null;
     pushed = null;
     options = null;
+    scanning = false;
 }

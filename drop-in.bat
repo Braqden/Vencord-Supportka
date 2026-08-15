@@ -3,12 +3,12 @@ setlocal
 
 set "SRC=%~dp0dist"
 
-set "VC=%LOCALAPPDATA%\Vencord"
+set "VC=%~dp0Vencord"
+if not exist "%VC%\dist\renderer.js" set "VC=%LOCALAPPDATA%\Vencord"
 if not exist "%VC%\dist\renderer.js" set "VC=%APPDATA%\Vencord"
 if not exist "%VC%\dist\renderer.js" (
     echo [Script] Vencord folder not found.
-    echo [Script] First install Vencord with the official installer: https://vencord.dev
-    echo [Script] Expected folder: %LOCALAPPDATA%\Vencord
+    echo [Script] Expected folder: %~dp0Vencord (or %LOCALAPPDATA%\Vencord)
     echo [Script] Then run this file again.
     pause
     exit /b 1

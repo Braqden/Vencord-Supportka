@@ -4,14 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-.vc-btn-base.vc-supportka-mute {
-    background-color: #3f4147 !important;
-    border-color: transparent !important;
-    color: #f2f3f5 !important;
-}
-
-.vc-btn-base.vc-supportka-mute:hover {
-    background-color: #4e5058 !important;
+.vc-btn-base.vc-supportka-btn {
+    gap: 6px;
 }
 
 .vc-btn-base.vc-supportka-boy {
