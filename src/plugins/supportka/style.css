@@ -86,7 +86,7 @@
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 56px);
     background: rgba(30, 31, 34, 0.85);
-    background: color-mix(in srgb, var(--background-tertiary) 72%, transparent);
+    background: color-mix(in srgb, var(--background-tertiary) 90%, transparent);
     border: 1px solid var(--background-modifier-accent);
     border-radius: 8px;
     box-shadow: var(--elevation-high);
@@ -94,8 +94,8 @@
     color: var(--vc-supportka-memo-text, var(--text-normal));
     font-family: var(--font-primary);
     opacity: 1;
-    -webkit-backdrop-filter: blur(16px) saturate(1.35);
-    backdrop-filter: blur(16px) saturate(1.35);
+    -webkit-backdrop-filter: blur(24px) saturate(1.35);
+    backdrop-filter: blur(24px) saturate(1.35);
     animation: vc-supportka-memo-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
     will-change: transform, opacity;
 }
