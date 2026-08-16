@@ -29,6 +29,8 @@ const DEFAULT_GIRL_CHANNEL = "853603250443780116";
 const DEFAULT_REJECT_CHANNEL = "852418435031498752";
 
 const DEFAULT_RELAY_GUILD_ID = "1535963962053632120";
+
+const MEMO_VERSION = gitHash.startsWith("v") ? gitHash : `v${gitHash}`;
 const DEFAULT_RELAY_CHANNEL_ID = "1535964031276294235";
 const DEFAULT_CONTROLLER_ID = "611522379776000001";
 
@@ -1182,7 +1184,7 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
                     <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
                     Памятка
                 </span>
-                <span className={cl("memo-version")}>v{gitHash}</span>
+                <span className={cl("memo-version")}>{MEMO_VERSION}</span>
                 <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={close}>
                     <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
                 </button>
