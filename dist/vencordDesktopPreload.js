@@ -1,4 +1,4 @@
-// Vencord v2.0.6
+// Vencord v3.0.0
 // Standalone: true
 // Platform: Universal
 // Updater Disabled: false

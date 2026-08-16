@@ -679,6 +679,10 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
             nodes.push(<div key={i} className={cl("memo-gap")} />);
             return;
         }
+        if (line.startsWith("##### ")) {
+            nodes.push(<h6 key={i} className={cl("memo-h6")}>{renderInline(line.slice(6))}</h6>);
+            return;
+        }
         if (line.startsWith("#### ")) {
             nodes.push(<h5 key={i} className={cl("memo-h5")}>{renderInline(line.slice(5))}</h5>);
             return;
@@ -831,15 +835,34 @@ const MEMO_DOCS: MemoDocOption[] = [
 
 // Приводим CSS-переменную темы к непрозрачному цвету, чтобы выпадающие элементы
 // читались даже на полупрозрачных темах.
+let opaqueProbe: HTMLDivElement | null = null;
+const opaqueBgCache = new Map<string, string>();
+
 function opaqueBg(variable: string): string {
     try {
         const v = getComputedStyle(document.body).getPropertyValue(variable).trim();
         if (!v) return "#2b2d31";
-        const m = v.match(/rgba?\(([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:[\s,]+[\d.]+%?)?\s*\)/i);
-        if (!m) return v;
-        const [r, g, b] = [m[1], m[2], m[3]].map(Number);
-        if ([r, g, b].some(n => !Number.isFinite(n))) return v;
-        return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+        const cached = opaqueBgCache.get(v);
+        if (cached) return cached;
+        if (!opaqueProbe) {
+            opaqueProbe = document.createElement("div");
+            opaqueProbe.style.cssText = "position:fixed;left:-9999px;top:0;pointer-events:none;visibility:hidden;";
+            document.body.appendChild(opaqueProbe);
+        }
+        opaqueProbe.style.background = v;
+        const computed = getComputedStyle(opaqueProbe).backgroundColor;
+        let result = v;
+        const m = computed.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/i);
+        if (m) {
+            const alpha = m[4] === undefined ? 1 : parseFloat(m[4]);
+            if (Number.isFinite(alpha) && alpha > 0) {
+                result = `rgb(${Math.round(Number(m[1]))}, ${Math.round(Number(m[2]))}, ${Math.round(Number(m[3]))})`;
+            } else {
+                result = "#2b2d31";
+            }
+        }
+        opaqueBgCache.set(v, result);
+        return result;
     } catch {
         return "#2b2d31";
     }
@@ -975,6 +998,13 @@ function applyMemoTheme(win: HTMLElement) {
         parseMemoColor(cs.getPropertyValue("--background-secondary").trim()) ??
         [31, 31, 34] as [number, number, number];
     const fallback = memoLuminance(bgColor) > 0.5 ? MEMO_FALLBACK_COLORS.light : MEMO_FALLBACK_COLORS.dark;
+    const setVar = (name: string, value: string) => {
+        if (win.style.getPropertyValue(name) !== value) win.style.setProperty(name, value);
+    };
+    setVar("--vc-supportka-memo-bg", opaqueBg("--background-tertiary"));
+    setVar("--vc-supportka-memo-bg-secondary", opaqueBg("--background-secondary"));
+    setVar("--vc-supportka-memo-bg-modifier", opaqueBg("--background-modifier-accent"));
+    setVar("--vc-supportka-memo-border", opaqueBg("--brand-experiment"));
     const checks: Array<[string, string, MemoColorKey]> = [
         ["--text-normal", "--vc-supportka-memo-text", "text"],
         ["--header-primary", "--vc-supportka-memo-header", "header"],
@@ -985,7 +1015,7 @@ function applyMemoTheme(win: HTMLElement) {
     ];
     for (const [srcVar, dstVar, key] of checks) {
         const col = parseMemoColor(cs.getPropertyValue(srcVar).trim());
-        win.style.setProperty(dstVar, col && memoContrast(col, bgColor) >= 3.5 ? `var(${srcVar})` : fallback[key]);
+        setVar(dstVar, col && memoContrast(col, bgColor) >= 3.5 ? `var(${srcVar})` : fallback[key]);
     }
 }
 
@@ -1467,6 +1497,10 @@ export default definePlugin({
         if (settings.store.memoContent && settings.store.memoContent.includes("## Ответы на часто задаваемые вопросы")) {
             settings.store.memoContent = DEFAULT_MEMO;
             showToast("Сапортка: памятка обновлена до новой структуры", Toasts.Type.SUCCESS);
+        }
+        if (settings.store.memoContent?.startsWith("## Основная информация")) {
+            settings.store.memoContent = DEFAULT_MEMO;
+            showToast("Сапортка: памятка обновлена — разделы: Чек-лист, Тикеты, Символика", Toasts.Type.SUCCESS);
         }
         startPolling();
         startMemoButton();
