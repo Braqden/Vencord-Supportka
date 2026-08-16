@@ -87,7 +87,7 @@
     max-height: calc(100vh - 56px);
     background: rgba(30, 31, 34, 0.85);
     background: color-mix(in srgb, var(--background-tertiary) 90%, transparent);
-    border: 1px solid var(--background-modifier-accent);
+    border: 2px solid var(--background-modifier-active);
     border-radius: 8px;
     box-shadow: var(--elevation-high);
     overflow: hidden;
