@@ -1321,6 +1321,18 @@ function placeMemoButtonBetween(btn: HTMLButtonElement, help: HTMLElement | null
     const or = other.getBoundingClientRect();
     const flows = br.right <= or.left + 2 && br.left >= rr.right - 2;
 
+    // Цвет иконки — как у соседней кнопки («Почта»/«Помощь»), чтобы не сливаться с фоном.
+    try {
+        const refSvg = ref.querySelector("svg");
+        const c = getComputedStyle(refSvg ?? ref).color;
+        if (c && c !== "transparent" && !c.includes("0, 0, 0, 0")) {
+            btn.style.color = c;
+            const svg = btn.querySelector("svg");
+            if (svg) svg.style.color = c;
+        }
+    } catch { }
+
+
     // Размер — точно как у соседней кнопки, чтобы стоять с ней вровень.
     btn.style.height = `${rr.height}px`;
     btn.style.width = `${rr.width}px`;
