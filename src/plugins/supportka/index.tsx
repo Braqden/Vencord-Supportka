@@ -585,8 +585,10 @@ interface MemoPos {
 
 const MEMO_POS_KEY = "vc-supportka-memo-pos";
 const MEMO_SIZE_KEY = "vc-supportka-memo-size";
+const MEMO_SIDEBAR_KEY = "vc-supportka-memo-sidebar";
 
 const DEFAULT_MEMO_SIZE = { width: 640, height: 540 };
+const DEFAULT_SIDEBAR_WIDTH = 190;
 
 const MEMO_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
 
@@ -788,13 +790,14 @@ function buildNav(root: Array<MemoSectionNode | string[]>): MemoNavItem[] {
     return nav;
 }
 
-function MemoSidebar({ nav, selected, onSelect }: {
+function MemoSidebar({ nav, selected, onSelect, width }: {
     nav: MemoNavItem[];
     selected: { sectionIndex: number; subIndex: number | null; };
     onSelect: (item: MemoNavItem) => void;
+    width: number;
 }) {
     return (
-        <nav className={cl("memo-sidebar")} aria-label="Разделы памятки">
+        <nav className={cl("memo-sidebar")} style={{ flexBasis: `${width}px`, width: `${width}px` }} aria-label="Разделы памятки">
             {nav.map((item, i) => {
                 const active = item.sectionIndex === selected.sectionIndex && item.subIndex === selected.subIndex;
                 return (
@@ -986,15 +989,18 @@ function applyMemoTheme(win: HTMLElement) {
     }
 }
 
-function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void; initialPos: MemoPos; initialSize: { width: number; height: number; }; }) {
+function MemoWindow({ onClose, initialPos, initialSize, initialSidebarWidth }: { onClose: () => void; initialPos: MemoPos; initialSize: { width: number; height: number; }; initialSidebarWidth: number; }) {
     const [pos, setPos] = useState<MemoPos>(initialPos);
     const posRef = useRef(initialPos);
     const [size, setSize] = useState(initialSize);
     const sizeRef = useRef(initialSize);
+    const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
+    const sidebarWidthRef = useRef(initialSidebarWidth);
     const [closing, setClosing] = useState(false);
     const closeTimer = useRef<number | null>(null);
     const drag = useRef<{ sx: number; sy: number; bx: number; by: number; } | null>(null);
     const resize = useRef<{ sx: number; sy: number; sw: number; sh: number; dir: string; } | null>(null);
+    const sidebarResize = useRef<{ sx: number; sw: number; } | null>(null);
     const winRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -1069,7 +1075,7 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
             target.removeEventListener("pointermove", onMove);
             target.removeEventListener("pointerup", onUp);
             target.removeEventListener("pointercancel", onUp);
-            drag.current = null;
+            sidebarResize.current = null;
             interaction.current = null;
         };
         const onUp = () => {
@@ -1145,6 +1151,40 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
         interaction.current = cleanup;
     };
 
+    const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const target = e.currentTarget;
+        sidebarResize.current = { sx: e.clientX, sw: sidebarWidthRef.current };
+        target.setPointerCapture(e.pointerId);
+
+        const onMove = (ev: PointerEvent) => {
+            const r = sidebarResize.current;
+            if (!r) return;
+            const el = winRef.current;
+            if (!el) return;
+            const w = Math.max(120, Math.min(el.clientWidth - 220, r.sw + ev.clientX - r.sx));
+            sidebarWidthRef.current = w;
+            setSidebarWidth(w);
+        };
+        const cleanup = () => {
+            target.removeEventListener("pointermove", onMove);
+            target.removeEventListener("pointerup", onUp);
+            target.removeEventListener("pointercancel", onUp);
+            resize.current = null;
+            interaction.current = null;
+        };
+        const onUp = () => {
+            void DataStore.set(MEMO_SIDEBAR_KEY, sidebarWidthRef.current);
+            cleanup();
+        };
+        target.addEventListener("pointermove", onMove);
+        target.addEventListener("pointerup", onUp);
+        target.addEventListener("pointercancel", onUp);
+        interaction.current = cleanup;
+    };
+
     const [memoId, setMemoId] = useState<string>("support");
     const content = memoId === "moderation"
         ? settings.store.memoContentModeration || DEFAULT_MODERATION_MEMO
@@ -1194,8 +1234,9 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
             </div>
             <div className={cl("memo-body")}>
                 {hasSidebar && (
-                    <MemoSidebar nav={nav} selected={selected} onSelect={onSelectNav} />
+                    <MemoSidebar nav={nav} selected={selected} onSelect={onSelectNav} width={sidebarWidth} />
                 )}
+                {hasSidebar && <div className={cl("memo-sidebar-resizer")} onPointerDown={onSidebarResizeStart} />}
                 <div key={`${selected.sectionIndex}-${selected.subIndex ?? ""}`} className={cl("memo-content")}>
                     {hasSidebar
                         ? renderMemoItems([root[selected.sectionIndex]], "memo")
@@ -1214,9 +1255,10 @@ let memoContainer: HTMLDivElement | null = null;
 
 async function openMemoWindow() {
     if (memoRoot) return;
-    const [p, s] = await Promise.all([
+    const [p, s, sb] = await Promise.all([
         DataStore.get<MemoPos>(MEMO_POS_KEY),
-        DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY)
+        DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY),
+        DataStore.get<number>(MEMO_SIDEBAR_KEY)
     ]);
     if (memoRoot) return;
     const w = s && Number.isFinite(s.width)
@@ -1236,7 +1278,7 @@ async function openMemoWindow() {
     memoRoot = createRoot(memoContainer);
     memoRoot.render(
         <ErrorBoundary>
-            <MemoWindow onClose={closeMemoWindow} initialPos={{ x, y }} initialSize={{ width: w, height: h }} />
+            <MemoWindow onClose={closeMemoWindow} initialPos={{ x, y }} initialSize={{ width: w, height: h }} initialSidebarWidth={sb && Number.isFinite(sb) ? Math.max(120, Math.min(w - 220, sb)) : DEFAULT_SIDEBAR_WIDTH} />
         </ErrorBoundary>,
     );
 }

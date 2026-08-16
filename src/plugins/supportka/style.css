@@ -244,6 +244,23 @@
     filter: brightness(1.2);
 }
 
+.vc-supportka-memo-sidebar-resizer {
+    flex: 0 0 6px;
+    cursor: col-resize;
+    user-select: none;
+    -webkit-app-region: no-drag;
+    background: transparent;
+    transition: background-color 0.15s ease;
+}
+
+.vc-supportka-memo-sidebar-resizer:hover {
+    background: var(--background-modifier-hover);
+}
+
+.vc-supportka-memo-sidebar-resizer:active {
+    background: var(--background-modifier-active);
+}
+
 .vc-supportka-memo-nav-item {
     display: block;
     width: 100%;
