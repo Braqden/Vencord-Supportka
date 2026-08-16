@@ -42,6 +42,19 @@ jobs:
           cd vencord
           pnpm build --standalone
 
+      - name: Create ZIP archive
+        run: |
+          mkdir -p /tmp/supportka/dist
+          cp vencord/dist/renderer.js vencord/dist/renderer.css \
+             vencord/dist/preload.js vencord/dist/patcher.js \
+             vencord/dist/vencordDesktopMain.js vencord/dist/vencordDesktopPreload.js \
+             vencord/dist/vencordDesktopRenderer.js vencord/dist/vencordDesktopRenderer.css \
+             /tmp/supportka/dist/
+          cp drop-in.bat drop-in.ps1 /tmp/supportka/
+          cd /tmp/supportka
+          zip -r "supportka-${{ github.ref_name }}.zip" drop-in.bat drop-in.ps1 dist
+          mv "supportka-${{ github.ref_name }}.zip" "$GITHUB_WORKSPACE"
+
       - name: Publish to GitHub Packages
         run: |
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=process.env.GITHUB_REF_NAME.replace(/^v/,'');fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
@@ -61,3 +74,4 @@ jobs:
             vencord/dist/vencordDesktopPreload.js
             vencord/dist/vencordDesktopRenderer.js
             vencord/dist/vencordDesktopRenderer.css
+            supportka-${{ github.ref_name }}.zip
