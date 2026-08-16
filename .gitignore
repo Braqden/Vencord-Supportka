@@ -8,6 +8,7 @@ dist/*
 !dist/vencordDesktopPreload.js
 !dist/vencordDesktopRenderer.js
 !dist/vencordDesktopRenderer.css
+!dist/*.zip
 Vencord/
 .symbol-resized/
 *.log

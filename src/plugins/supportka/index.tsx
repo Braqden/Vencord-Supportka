@@ -19,7 +19,7 @@ import { createRoot, Forms, Modal, openModal, RestAPI, SelectedGuildStore, showT
 import { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type { Root } from "react-dom/client";
 
-import { DEFAULT_MEMO } from "./memo";
+import { DEFAULT_MEMO, DEFAULT_MODERATION_MEMO } from "./memo";
 import { OverlayOptions, OverlayRole, startOverlay, stopOverlay } from "./overlay";
 import { getSymbolImage } from "./symbols";
 
@@ -114,9 +114,16 @@ const settings = definePluginSettings({
     memoContent: {
         type: OptionType.STRING,
         multiline: true,
-        displayName: "Текст памятки",
-        description: "Содержимое памятки. Формат строк: ## заголовок, ### подзаголовок, - пункт, 1. нумерованный пункт, > заметка, --- разделитель, **жирный**, `код`.",
+        displayName: "Текст памятки «Саппорт»",
+        description: "Содержимое памятки «Саппорт». Формат строк: ## заголовок, ### подзаголовок, - пункт, 1. нумерованный пункт, > заметка, --- разделитель, **жирный**, `код`.",
         default: DEFAULT_MEMO
+    },
+    memoContentModeration: {
+        type: OptionType.STRING,
+        multiline: true,
+        displayName: "Текст памятки «Модерация»",
+        description: "Содержимое памятки «Модерация». Тот же формат разметки, что и у «Саппорт».",
+        default: DEFAULT_MODERATION_MEMO
     }
 });
 
@@ -576,11 +583,19 @@ interface MemoPos {
 const MEMO_POS_KEY = "vc-supportka-memo-pos";
 const MEMO_SIZE_KEY = "vc-supportka-memo-size";
 
-const DEFAULT_MEMO_SIZE = { width: 400, height: 520 };
+const DEFAULT_MEMO_SIZE = { width: 640, height: 540 };
 
 const MEMO_ICON_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h4"/></svg>';
 
 const CLOSE_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+const PANEL_LEFT_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/></svg>';
+
+const SHIELD_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>';
+
+const CHEVRONS_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>';
+
+const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 
 const CHEVRON_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 
@@ -706,11 +721,12 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
     return nodes;
 }
 
-function MemoSection({ level, title, children }: { level: number; title: string; children: ReactNode }) {
+function MemoSection({ level, title, headerId, children }: { level: number; title: string; headerId?: string; children: ReactNode }) {
     const [open, setOpen] = useState(true);
     return (
         <div className={cl("memo-section")}>
             <button
+                id={headerId}
                 className={cl("memo-section-header", `memo-section-header-${level}`)}
                 aria-expanded={open}
                 onClick={() => setOpen(o => !o)}
@@ -734,7 +750,7 @@ function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: stri
             nodes.push(<div key={`${baseKey}-t${i}`}>{renderMemoLines(item)}</div>);
         } else {
             nodes.push(
-                <MemoSection key={`${baseKey}-s${i}`} level={item.level} title={item.title}>
+                <MemoSection key={`${baseKey}-s${i}`} level={item.level} title={item.title} headerId={`${baseKey}-s${i}`}>
                     {renderMemoItems(item.items, `${baseKey}-s${i}`)}
                 </MemoSection>
             );
@@ -746,6 +762,135 @@ function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: stri
 function MemoBody({ content }: { content: string }) {
     const nodes = useMemo(() => renderMemoItems(parseMemo(content), "memo"), [content]);
     return <>{nodes}</>;
+}
+
+interface MemoNavItem {
+    sectionIndex: number;
+    subIndex: number | null;
+    title: string;
+    depth: number;
+}
+
+function buildNav(root: Array<MemoSectionNode | string[]>): MemoNavItem[] {
+    const nav: MemoNavItem[] = [];
+    root.forEach((node, i) => {
+        if (Array.isArray(node) || node.level !== 2) return;
+        nav.push({ sectionIndex: i, subIndex: null, title: node.title, depth: node.level });
+        node.items.forEach((child, j) => {
+            if (!Array.isArray(child) && child.level === 3) {
+                nav.push({ sectionIndex: i, subIndex: j, title: child.title, depth: child.level });
+            }
+        });
+    });
+    return nav;
+}
+
+function MemoSidebar({ nav, selected, onSelect }: {
+    nav: MemoNavItem[];
+    selected: { sectionIndex: number; subIndex: number | null; };
+    onSelect: (item: MemoNavItem) => void;
+}) {
+    return (
+        <nav className={cl("memo-sidebar")} aria-label="Разделы памятки">
+            {nav.map((item, i) => {
+                const active = item.sectionIndex === selected.sectionIndex && item.subIndex === selected.subIndex;
+                return (
+                    <button
+                        key={i}
+                        type="button"
+                        className={cl("memo-nav-item", item.depth === 3 ? "sub" : "", active ? "active" : "")}
+                        title={item.title}
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => onSelect(item)}
+                    >
+                        {renderInline(item.title)}
+                    </button>
+                );
+            })}
+        </nav>
+    );
+}
+
+interface MemoDocOption {
+    id: string;
+    label: string;
+    subtitle?: string;
+    icon: string;
+}
+
+const MEMO_DOCS: MemoDocOption[] = [
+    { id: "support", label: "Саппорт", subtitle: "Тикеты и ответы на вопросы", icon: PANEL_LEFT_ICON_SVG },
+    { id: "moderation", label: "Модерация", subtitle: "Правила и наказания", icon: SHIELD_ICON_SVG }
+];
+
+function MemoSelect({ options, value, onChange }: {
+    options: MemoDocOption[];
+    value: string;
+    onChange: (id: string) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        const onPointerDown = (e: globalThis.PointerEvent) => {
+            if (!ref.current?.contains(e.target as Node)) setOpen(false);
+        };
+        const onKeyDown = (e: globalThis.KeyboardEvent) => {
+            if (e.key === "Escape") setOpen(false);
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [open]);
+
+    const selected = options.find(o => o.id === value) ?? options[0];
+
+    return (
+        <div ref={ref} className={cl("memo-select")}>
+            <button
+                type="button"
+                className={cl("memo-select-trigger")}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => setOpen(o => !o)}
+            >
+                <span className={cl("memo-select-icon")} dangerouslySetInnerHTML={{ __html: selected.icon }} />
+                <span className={cl("memo-select-label")}>{selected.label}</span>
+                <span className={cl("memo-select-chevrons")} dangerouslySetInnerHTML={{ __html: CHEVRONS_ICON_SVG }} />
+            </button>
+            {open && (
+                <div className={cl("memo-select-menu")} role="listbox" aria-label="Памятка">
+                    {options.map(opt => {
+                        const active = opt.id === selected.id;
+                        return (
+                            <button
+                                key={opt.id}
+                                type="button"
+                                role="option"
+                                aria-selected={active}
+                                className={cl("memo-select-option", active ? "active" : "")}
+                                onClick={() => {
+                                    onChange(opt.id);
+                                    setOpen(false);
+                                }}
+                            >
+                                <span className={cl("memo-select-option-icon")} dangerouslySetInnerHTML={{ __html: opt.icon }} />
+                                <span className={cl("memo-select-option-text")}>
+                                    <span className={cl("memo-select-option-label")}>{opt.label}</span>
+                                    {opt.subtitle && <span className={cl("memo-select-option-sub")}>{opt.subtitle}</span>}
+                                </span>
+                                {active && <span className={cl("memo-select-check")} dangerouslySetInnerHTML={{ __html: CHECK_ICON_SVG }} />}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
 }
 
 function parseMemoColor(c: string): [number, number, number] | null {
@@ -947,7 +1092,7 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
             let height = r.sh;
             if (r.dir.includes("e")) width = r.sw + dx;
             if (r.dir.includes("s")) height = r.sh + dy;
-            width = Math.max(300, width);
+            width = Math.max(360, width);
             height = Math.max(200, height);
             width = Math.min(window.innerWidth - posRef.current.x - 8, width);
             height = Math.min(window.innerHeight - posRef.current.y - 8, height);
@@ -981,21 +1126,61 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
         interaction.current = cleanup;
     };
 
-    const content = settings.store.memoContent || DEFAULT_MEMO;
+    const [memoId, setMemoId] = useState<string>("support");
+    const content = memoId === "moderation"
+        ? settings.store.memoContentModeration || DEFAULT_MODERATION_MEMO
+        : settings.store.memoContent || DEFAULT_MEMO;
+    const root = useMemo(() => parseMemo(content), [content]);
+    const nav = useMemo(() => buildNav(root), [root]);
+    const [selected, setSelected] = useState<{ sectionIndex: number; subIndex: number | null; }>({ sectionIndex: 0, subIndex: null });
+
+    useEffect(() => {
+        setSelected({ sectionIndex: 0, subIndex: null });
+    }, [memoId]);
+
+    useEffect(() => {
+        if (root.length && selected.sectionIndex >= root.length) {
+            setSelected({ sectionIndex: 0, subIndex: null });
+        }
+    }, [root, selected.sectionIndex]);
+
+    useEffect(() => {
+        if (selected.subIndex == null) return;
+        const id = `memo-s0-s${selected.subIndex}`;
+        requestAnimationFrame(() => {
+            document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+    }, [selected]);
+
+    const onSelectNav = useCallback((item: MemoNavItem) => {
+        setSelected({ sectionIndex: item.sectionIndex, subIndex: item.subIndex });
+    }, []);
+
+    const hasSidebar = nav.length > 0;
 
     return (
         <div ref={winRef} className={cl("memo-window", closing ? "closing" : "")} style={{ left: pos.x, top: pos.y, width: size.width, height: size.height }}>
             <div className={cl("memo-header")} onPointerDown={onHeaderDown}>
                 <span className={cl("memo-title")}>
                     <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
-                    Памятка саппорта
+                    Памятка
                 </span>
                 <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={close}>
                     <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
                 </button>
             </div>
+            <div className={cl("memo-toolbar")}>
+                <MemoSelect options={MEMO_DOCS} value={memoId} onChange={setMemoId} />
+            </div>
             <div className={cl("memo-body")}>
-                <MemoBody content={content} />
+                {hasSidebar && (
+                    <MemoSidebar nav={nav} selected={selected} onSelect={onSelectNav} />
+                )}
+                <div key={`${selected.sectionIndex}-${selected.subIndex ?? ""}`} className={cl("memo-content")}>
+                    {hasSidebar
+                        ? renderMemoItems([root[selected.sectionIndex]], "memo")
+                        : <MemoBody content={content} />}
+                </div>
             </div>
             <div className={cl("memo-resize-e")} onPointerDown={onResizeStart("e")} />
             <div className={cl("memo-resize-s")} onPointerDown={onResizeStart("s")} />
@@ -1015,7 +1200,7 @@ async function openMemoWindow() {
     ]);
     if (memoRoot) return;
     const w = s && Number.isFinite(s.width)
-        ? Math.max(300, Math.min(window.innerWidth - 24, s.width))
+        ? Math.max(360, Math.min(window.innerWidth - 24, s.width))
         : DEFAULT_MEMO_SIZE.width;
     const h = s && Number.isFinite(s.height)
         ? Math.max(200, Math.min(window.innerHeight - 72, s.height))
@@ -1188,6 +1373,12 @@ export default definePlugin({
     start() {
         if (settings.store.rejectPresets === OLD_REJECT_PRESETS) {
             settings.store.rejectPresets = DEFAULT_REJECT_PRESETS;
+        }
+        const badMemo = (content: string | undefined) => Boolean(content && /[\u5350\u534D\u03DF\uA46D]/.test(content));
+        if (badMemo(settings.store.memoContent) || badMemo(settings.store.memoContentModeration)) {
+            if (badMemo(settings.store.memoContent)) settings.store.memoContent = DEFAULT_MEMO;
+            if (badMemo(settings.store.memoContentModeration)) settings.store.memoContentModeration = DEFAULT_MODERATION_MEMO;
+            showToast("Сапортка: памятка обновлена — убраны символы, вызывающие автобан", Toasts.Type.SUCCESS);
         }
         startPolling();
         startMemoButton();
