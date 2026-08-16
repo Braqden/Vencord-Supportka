@@ -1380,6 +1380,10 @@ export default definePlugin({
             if (badMemo(settings.store.memoContentModeration)) settings.store.memoContentModeration = DEFAULT_MODERATION_MEMO;
             showToast("Сапортка: памятка обновлена — убраны символы, вызывающие автобан", Toasts.Type.SUCCESS);
         }
+        if (settings.store.memoContent && settings.store.memoContent.includes("## Ответы на часто задаваемые вопросы")) {
+            settings.store.memoContent = DEFAULT_MEMO;
+            showToast("Сапортка: памятка обновлена до новой структуры", Toasts.Type.SUCCESS);
+        }
         startPolling();
         startMemoButton();
         startOverlay(buildOverlayOptions());
