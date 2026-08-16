@@ -824,6 +824,22 @@ const MEMO_DOCS: MemoDocOption[] = [
     { id: "moderation", label: "Модерация", subtitle: "Правила и наказания", icon: SHIELD_ICON_SVG }
 ];
 
+// Приводим `--background-floating` к непрозрачному цвету, чтобы выпадающее меню
+// читалось даже на полупрозрачных темах.
+function opaqueFloating(): string {
+    try {
+        const v = getComputedStyle(document.body).getPropertyValue("--background-floating").trim();
+        if (!v) return "#18191c";
+        const m = v.match(/rgba?\(([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:[\s,]+[\d.]+%?)?\s*\)/i);
+        if (!m) return v;
+        const [r, g, b] = [m[1], m[2], m[3]].map(Number);
+        if ([r, g, b].some(n => !Number.isFinite(n))) return v;
+        return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+    } catch {
+        return "#18191c";
+    }
+}
+
 function MemoSelect({ options, value, onChange }: {
     options: MemoDocOption[];
     value: string;
@@ -864,7 +880,7 @@ function MemoSelect({ options, value, onChange }: {
                 <span className={cl("memo-select-chevrons")} dangerouslySetInnerHTML={{ __html: CHEVRONS_ICON_SVG }} />
             </button>
             {open && (
-                <div className={cl("memo-select-menu")} role="listbox" aria-label="Памятка">
+                <div className={cl("memo-select-menu")} style={{ backgroundColor: opaqueFloating(), opacity: 1 }} role="listbox" aria-label="Памятка">
                     {options.map(opt => {
                         const active = opt.id === selected.id;
                         return (
@@ -1269,6 +1285,9 @@ function ensureMemoButton() {
     btn.title = "Памятка";
     btn.setAttribute("aria-label", "Памятка");
     btn.innerHTML = MEMO_ICON_SVG;
+    btn.style.cssText = "display:flex;align-items:center;justify-content:center;padding:0;margin:0;border:none;border-radius:4px;background:transparent;color:var(--interactive-normal);cursor:pointer;line-height:0;-webkit-app-region:no-drag;";
+    const btnSvg = btn.querySelector("svg");
+    if (btnSvg) btnSvg.style.cssText = "width:24px;height:24px;display:block;color:var(--interactive-normal);";
     btn.addEventListener("click", () => {
         if (memoRoot) {
             closeMemoWindow();
