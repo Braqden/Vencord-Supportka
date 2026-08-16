@@ -172,6 +172,19 @@
     color: var(--vc-supportka-memo-interactive, var(--interactive-normal));
 }
 
+.vc-supportka-memo-version {
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--background-modifier-hover);
+    color: var(--vc-supportka-memo-interactive-muted, var(--interactive-muted));
+    font-family: var(--font-primary);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    user-select: none;
+}
+
 .vc-supportka-memo-close {
     display: flex;
     align-items: center;

@@ -13,6 +13,7 @@ import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
 import { debounce } from "@shared/debounce";
 import { classNameFactory } from "@utils/css";
+import gitHash from "~git-hash";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
 import { createRoot, Forms, Modal, openModal, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, useCallback, useEffect, useMemo, useRef, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
@@ -1165,6 +1166,7 @@ function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void;
                     <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
                     Памятка
                 </span>
+                <span className={cl("memo-version")}>v{gitHash}</span>
                 <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={close}>
                     <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
                 </button>
