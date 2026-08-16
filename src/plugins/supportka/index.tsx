@@ -829,19 +829,19 @@ const MEMO_DOCS: MemoDocOption[] = [
     { id: "moderation", label: "Модерация", subtitle: "Правила и наказания", icon: SHIELD_ICON_SVG }
 ];
 
-// Приводим `--background-floating` к непрозрачному цвету, чтобы выпадающее меню
-// читалось даже на полупрозрачных темах.
-function opaqueFloating(): string {
+// Приводим CSS-переменную темы к непрозрачному цвету, чтобы выпадающие элементы
+// читались даже на полупрозрачных темах.
+function opaqueBg(variable: string): string {
     try {
-        const v = getComputedStyle(document.body).getPropertyValue("--background-floating").trim();
-        if (!v) return "#18191c";
+        const v = getComputedStyle(document.body).getPropertyValue(variable).trim();
+        if (!v) return "#2b2d31";
         const m = v.match(/rgba?\(([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:[\s,]+[\d.]+%?)?\s*\)/i);
         if (!m) return v;
         const [r, g, b] = [m[1], m[2], m[3]].map(Number);
         if ([r, g, b].some(n => !Number.isFinite(n))) return v;
         return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
     } catch {
-        return "#18191c";
+        return "#2b2d31";
     }
 }
 
@@ -885,7 +885,7 @@ function MemoSelect({ options, value, onChange }: {
                 <span className={cl("memo-select-chevrons")} dangerouslySetInnerHTML={{ __html: CHEVRONS_ICON_SVG }} />
             </button>
             {open && (
-                <div className={cl("memo-select-menu")} style={{ backgroundColor: opaqueFloating(), opacity: 1 }} role="listbox" aria-label="Памятка">
+                <div className={cl("memo-select-menu")} style={{ backgroundColor: opaqueBg("--background-secondary"), opacity: 1 }} role="listbox" aria-label="Памятка">
                     {options.map(opt => {
                         const active = opt.id === selected.id;
                         return (
