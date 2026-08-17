@@ -24,12 +24,25 @@ jobs:
 
       - name: Clone Vencord
         run: |
-          git clone --depth 1 https://github.com/Vendicated/Vencord.git vencord
+          for i in 1 2 3; do
+            rm -rf vencord
+            git clone --depth 1 https://github.com/Vendicated/Vencord.git vencord && break
+            echo "Clone attempt $i failed, retrying..."
+            sleep 10
+          done
           cd vencord
-          git fetch --depth 1 origin v1.15.1
+          for i in 1 2 3; do
+            git fetch --depth 1 origin v1.15.1 && break
+            echo "Fetch attempt $i failed, retrying..."
+            sleep 10
+          done
           git checkout v1.15.1
           corepack enable
-          pnpm install --frozen-lockfile
+          for i in 1 2 3; do
+            pnpm install --frozen-lockfile && break
+            echo "Install attempt $i failed, retrying..."
+            sleep 10
+          done
 
       - name: Get short commit hash
         id: hash
