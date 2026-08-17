@@ -17,7 +17,7 @@ import gitHash from "~git-hash";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message, RenderModalProps, User } from "@vencord/discord-types";
 import { createRoot, Forms, Modal, openModal, RestAPI, SelectedGuildStore, showToast, TextInput, Toasts, useCallback, useEffect, useMemo, useRef, UserStore, useState, useStateFromStores, VoiceStateStore } from "@webpack/common";
-import { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { Root } from "react-dom/client";
 
 import { DEFAULT_MEMO, DEFAULT_MODERATION_MEMO } from "./memo";
@@ -102,6 +102,13 @@ const settings = definePluginSettings({
         default: DEFAULT_OVERLAY_ENTRIES,
         onChange: () => restartOverlay()
     },
+    overlayHotkeys: {
+        type: OptionType.BOOLEAN,
+        displayName: "Горячие клавиши в оверлее",
+        description: "В игровом оверлее выбери участника (клик по нему или ↑↓). Q — Мальчик, E — Девочка, R — Отказ (T — следующая причина), U — Размутить, Esc — снять выбор.",
+        default: true,
+        onChange: () => restartOverlay()
+    },
     rejectPresets: {
         type: OptionType.STRING,
         displayName: "Пресеты причин отказа",
@@ -151,7 +158,18 @@ function buildOverlayOptions(): OverlayOptions {
     return {
         guildId: DEFAULT_OVERLAY_GUILD_ID,
         roles: parseOverlayEntries(settings.store.overlayEntries),
-        allowMainWindow: settings.store.overlayEnabled
+        allowMainWindow: settings.store.overlayEnabled,
+        hotkeys: {
+            enabled: settings.store.overlayHotkeys,
+            sendCommands: settings.store.sendCommands,
+            boyChannelId: settings.store.boyChannelId,
+            girlChannelId: settings.store.girlChannelId,
+            rejectChannelId: settings.store.rejectChannelId,
+            rejectReasons: settings.store.rejectPresets
+                .split(";")
+                .map(p => p.trim())
+                .filter(Boolean)
+        }
     };
 }
 
@@ -346,6 +364,8 @@ function handleRelayMessage(message: { id?: string; channel_id?: string; content
         return;
     }
 
+    if (command.user !== UserStore.getCurrentUser().id) return;
+
     executeCommand(command);
 }
 
@@ -367,8 +387,8 @@ async function pollRelay() {
     }
 }
 
-function startPolling() {
-    void loadLastProcessed();
+async function startPolling() {
+    await loadLastProcessed();
     void pollRelay();
     pollTimer = window.setInterval(() => void pollRelay(), 5000);
 }
@@ -585,10 +605,8 @@ interface MemoPos {
 
 const MEMO_POS_KEY = "vc-supportka-memo-pos";
 const MEMO_SIZE_KEY = "vc-supportka-memo-size";
-const MEMO_SIDEBAR_KEY = "vc-supportka-memo-sidebar";
 
 const DEFAULT_MEMO_SIZE = { width: 640, height: 540 };
-const DEFAULT_SIDEBAR_WIDTH = 190;
 
 const MEMO_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
 
@@ -601,8 +619,6 @@ const SHIELD_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="n
 const CHEVRONS_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>';
 
 const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
-
-const CHEVRON_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 
 const INLINE_RE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*|__([^_]+)__|~~([^~]+)~~/g;
 
@@ -679,6 +695,10 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
             nodes.push(<div key={i} className={cl("memo-gap")} />);
             return;
         }
+        if (line.startsWith("##### ")) {
+            nodes.push(<h6 key={i} className={cl("memo-h6")}>{renderInline(line.slice(6))}</h6>);
+            return;
+        }
         if (line.startsWith("#### ")) {
             nodes.push(<h5 key={i} className={cl("memo-h5")}>{renderInline(line.slice(5))}</h5>);
             return;
@@ -726,38 +746,19 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
     return nodes;
 }
 
-function MemoSection({ level, title, headerId, children }: { level: number; title: string; headerId?: string; children: ReactNode }) {
-    const [open, setOpen] = useState(false);
-    return (
-        <div className={cl("memo-section")}>
-            <button
-                id={headerId}
-                className={cl("memo-section-header", `memo-section-header-${level}`)}
-                aria-expanded={open}
-                onClick={() => setOpen(o => !o)}
-            >
-                <span className={cl("memo-section-chevron", open ? "open" : "")}>
-                    <span dangerouslySetInnerHTML={{ __html: CHEVRON_ICON_SVG }} />
-                </span>
-                <span className={cl("memo-section-title")}>{renderInline(title)}</span>
-            </button>
-            <div className={cl("memo-section-collapse", open ? "open" : "closed")}>
-                <div className={cl("memo-section-body")}>{children}</div>
-            </div>
-        </div>
-    );
-}
-
 function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: string): JSX.Element[] {
     const nodes: JSX.Element[] = [];
     items.forEach((item, i) => {
         if (Array.isArray(item)) {
             nodes.push(<div key={`${baseKey}-t${i}`}>{renderMemoLines(item)}</div>);
         } else {
+            const Tag = item.level === 2 ? "h3" : "h4";
+            const styleClass = item.level === 2 ? cl("memo-h2") : cl("memo-h3");
             nodes.push(
-                <MemoSection key={`${baseKey}-s${i}`} level={item.level} title={item.title} headerId={`${baseKey}-s${i}`}>
+                <div key={`${baseKey}-s${i}`} className={cl("memo-sec")}>
+                    <Tag className={styleClass}>{renderInline(item.title)}</Tag>
                     {renderMemoItems(item.items, `${baseKey}-s${i}`)}
-                </MemoSection>
+                </div>
             );
         }
     });
@@ -767,54 +768,6 @@ function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: stri
 function MemoBody({ content }: { content: string }) {
     const nodes = useMemo(() => renderMemoItems(parseMemo(content), "memo"), [content]);
     return <>{nodes}</>;
-}
-
-interface MemoNavItem {
-    sectionIndex: number;
-    subIndex: number | null;
-    title: string;
-    depth: number;
-}
-
-function buildNav(root: Array<MemoSectionNode | string[]>): MemoNavItem[] {
-    const nav: MemoNavItem[] = [];
-    root.forEach((node, i) => {
-        if (Array.isArray(node) || node.level !== 2) return;
-        nav.push({ sectionIndex: i, subIndex: null, title: node.title, depth: node.level });
-        node.items.forEach((child, j) => {
-            if (!Array.isArray(child) && child.level === 3) {
-                nav.push({ sectionIndex: i, subIndex: j, title: child.title, depth: child.level });
-            }
-        });
-    });
-    return nav;
-}
-
-function MemoSidebar({ nav, selected, onSelect, width }: {
-    nav: MemoNavItem[];
-    selected: { sectionIndex: number; subIndex: number | null; };
-    onSelect: (item: MemoNavItem) => void;
-    width: number;
-}) {
-    return (
-        <nav className={cl("memo-sidebar")} style={{ flexBasis: `${width}px`, width: `${width}px` }} aria-label="Разделы памятки">
-            {nav.map((item, i) => {
-                const active = item.sectionIndex === selected.sectionIndex && item.subIndex === selected.subIndex;
-                return (
-                    <button
-                        key={i}
-                        type="button"
-                        className={cl("memo-nav-item", item.depth === 3 ? "sub" : "", active ? "active" : "")}
-                        title={item.title}
-                        aria-current={active ? "page" : undefined}
-                        onClick={() => onSelect(item)}
-                    >
-                        {renderInline(item.title)}
-                    </button>
-                );
-            })}
-        </nav>
-    );
 }
 
 interface MemoDocOption {
@@ -831,15 +784,34 @@ const MEMO_DOCS: MemoDocOption[] = [
 
 // Приводим CSS-переменную темы к непрозрачному цвету, чтобы выпадающие элементы
 // читались даже на полупрозрачных темах.
+let opaqueProbe: HTMLDivElement | null = null;
+const opaqueBgCache = new Map<string, string>();
+
 function opaqueBg(variable: string): string {
     try {
         const v = getComputedStyle(document.body).getPropertyValue(variable).trim();
         if (!v) return "#2b2d31";
-        const m = v.match(/rgba?\(([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:[\s,]+[\d.]+%?)?\s*\)/i);
-        if (!m) return v;
-        const [r, g, b] = [m[1], m[2], m[3]].map(Number);
-        if ([r, g, b].some(n => !Number.isFinite(n))) return v;
-        return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+        const cached = opaqueBgCache.get(v);
+        if (cached) return cached;
+        if (!opaqueProbe) {
+            opaqueProbe = document.createElement("div");
+            opaqueProbe.style.cssText = "position:fixed;left:-9999px;top:0;pointer-events:none;visibility:hidden;";
+            document.body.appendChild(opaqueProbe);
+        }
+        opaqueProbe.style.background = v;
+        const computed = getComputedStyle(opaqueProbe).backgroundColor;
+        let result = v;
+        const m = computed.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/i);
+        if (m) {
+            const alpha = m[4] === undefined ? 1 : parseFloat(m[4]);
+            if (Number.isFinite(alpha) && alpha > 0) {
+                result = `rgb(${Math.round(Number(m[1]))}, ${Math.round(Number(m[2]))}, ${Math.round(Number(m[3]))})`;
+            } else {
+                result = "#2b2d31";
+            }
+        }
+        opaqueBgCache.set(v, result);
+        return result;
     } catch {
         return "#2b2d31";
     }
@@ -975,6 +947,13 @@ function applyMemoTheme(win: HTMLElement) {
         parseMemoColor(cs.getPropertyValue("--background-secondary").trim()) ??
         [31, 31, 34] as [number, number, number];
     const fallback = memoLuminance(bgColor) > 0.5 ? MEMO_FALLBACK_COLORS.light : MEMO_FALLBACK_COLORS.dark;
+    const setVar = (name: string, value: string) => {
+        if (win.style.getPropertyValue(name) !== value) win.style.setProperty(name, value);
+    };
+    setVar("--vc-supportka-memo-bg", opaqueBg("--background-tertiary"));
+    setVar("--vc-supportka-memo-bg-secondary", opaqueBg("--background-secondary"));
+    setVar("--vc-supportka-memo-bg-modifier", opaqueBg("--background-modifier-accent"));
+    setVar("--vc-supportka-memo-border", opaqueBg("--brand-experiment"));
     const checks: Array<[string, string, MemoColorKey]> = [
         ["--text-normal", "--vc-supportka-memo-text", "text"],
         ["--header-primary", "--vc-supportka-memo-header", "header"],
@@ -985,39 +964,19 @@ function applyMemoTheme(win: HTMLElement) {
     ];
     for (const [srcVar, dstVar, key] of checks) {
         const col = parseMemoColor(cs.getPropertyValue(srcVar).trim());
-        win.style.setProperty(dstVar, col && memoContrast(col, bgColor) >= 3.5 ? `var(${srcVar})` : fallback[key]);
+        setVar(dstVar, col && memoContrast(col, bgColor) >= 3.5 ? `var(${srcVar})` : fallback[key]);
     }
-    const toRgb = (rgba: string): string => {
-        const probe = document.createElement("div");
-        probe.style.cssText = `position:fixed;left:-9999px;top:0;pointer-events:none;visibility:hidden;background:${rgba}`;
-        document.body.appendChild(probe);
-        const c = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        return c;
-    };
-    win.style.background = toRgb(cs.getPropertyValue("--background-tertiary").trim() || "#313338");
-    const header = win.querySelector<HTMLElement>(`.${cl("memo-header")}`);
-    if (header) header.style.background = toRgb(cs.getPropertyValue("--background-secondary").trim() || "#2b2d31");
-    const body = win.querySelector<HTMLElement>(`.${cl("memo-body")}`);
-    if (body) body.style.background = toRgb(cs.getPropertyValue("--background-tertiary").trim() || "#313338");
-    const content = win.querySelector<HTMLElement>(`.${cl("memo-content")}`);
-    if (content) content.style.background = toRgb(cs.getPropertyValue("--background-tertiary").trim() || "#313338");
-    const toolbar = win.querySelector<HTMLElement>(`.${cl("memo-toolbar")}`);
-    if (toolbar) toolbar.style.background = toRgb(cs.getPropertyValue("--background-tertiary").trim() || "#313338");
 }
 
-function MemoWindow({ onClose, initialPos, initialSize, initialSidebarWidth }: { onClose: () => void; initialPos: MemoPos; initialSize: { width: number; height: number; }; initialSidebarWidth: number; }) {
+function MemoWindow({ onClose, initialPos, initialSize }: { onClose: () => void; initialPos: MemoPos; initialSize: { width: number; height: number; }; }) {
     const [pos, setPos] = useState<MemoPos>(initialPos);
     const posRef = useRef(initialPos);
     const [size, setSize] = useState(initialSize);
     const sizeRef = useRef(initialSize);
-    const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
-    const sidebarWidthRef = useRef(initialSidebarWidth);
     const [closing, setClosing] = useState(false);
     const closeTimer = useRef<number | null>(null);
     const drag = useRef<{ sx: number; sy: number; bx: number; by: number; } | null>(null);
     const resize = useRef<{ sx: number; sy: number; sw: number; sh: number; dir: string; } | null>(null);
-    const sidebarResize = useRef<{ sx: number; sw: number; } | null>(null);
     const winRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -1092,7 +1051,6 @@ function MemoWindow({ onClose, initialPos, initialSize, initialSidebarWidth }: {
             target.removeEventListener("pointermove", onMove);
             target.removeEventListener("pointerup", onUp);
             target.removeEventListener("pointercancel", onUp);
-            sidebarResize.current = null;
             interaction.current = null;
         };
         const onUp = () => {
@@ -1168,89 +1126,27 @@ function MemoWindow({ onClose, initialPos, initialSize, initialSidebarWidth }: {
         interaction.current = cleanup;
     };
 
-    const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const target = e.currentTarget;
-        sidebarResize.current = { sx: e.clientX, sw: sidebarWidthRef.current };
-        target.setPointerCapture(e.pointerId);
-
-        const onMove = (ev: PointerEvent) => {
-            const r = sidebarResize.current;
-            if (!r) return;
-            const el = winRef.current;
-            if (!el) return;
-            const w = Math.max(120, Math.min(el.clientWidth - 220, r.sw + ev.clientX - r.sx));
-            sidebarWidthRef.current = w;
-            setSidebarWidth(w);
-        };
-        const cleanup = () => {
-            target.removeEventListener("pointermove", onMove);
-            target.removeEventListener("pointerup", onUp);
-            target.removeEventListener("pointercancel", onUp);
-            resize.current = null;
-            interaction.current = null;
-        };
-        const onUp = () => {
-            void DataStore.set(MEMO_SIDEBAR_KEY, sidebarWidthRef.current);
-            cleanup();
-        };
-        target.addEventListener("pointermove", onMove);
-        target.addEventListener("pointerup", onUp);
-        target.addEventListener("pointercancel", onUp);
-        interaction.current = cleanup;
-    };
-
     const [memoId, setMemoId] = useState<string>("support");
     const content = memoId === "moderation"
         ? settings.store.memoContentModeration || DEFAULT_MODERATION_MEMO
         : settings.store.memoContent || DEFAULT_MEMO;
-    const root = useMemo(() => parseMemo(content), [content]);
-    const nav = useMemo(() => buildNav(root), [root]);
-    const [selected, setSelected] = useState<{ sectionIndex: number; subIndex: number | null; }>({ sectionIndex: 0, subIndex: null });
-
-    useEffect(() => {
-        setSelected({ sectionIndex: 0, subIndex: null });
-    }, [memoId]);
-
-    useEffect(() => {
-        if (root.length && selected.sectionIndex >= root.length) {
-            setSelected({ sectionIndex: 0, subIndex: null });
-        }
-    }, [root, selected.sectionIndex]);
-
-    useEffect(() => {
-        if (selected.subIndex == null) return;
-        const id = `memo-s0-s${selected.subIndex}`;
-        requestAnimationFrame(() => {
-            document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-    }, [selected]);
-
-    const onSelectNav = useCallback((item: MemoNavItem) => {
-        setSelected({ sectionIndex: item.sectionIndex, subIndex: item.subIndex });
-    }, []);
-
-    const hasSidebar = nav.length > 0;
 
     return (
         <div ref={winRef} className={cl("memo-window", closing ? "closing" : "")} style={{ left: pos.x, top: pos.y, width: size.width, height: size.height }}>
             <div className={cl("memo-header")} onPointerDown={onHeaderDown}>
-                <span className={cl("memo-title")}>
-                    <span dangerouslySetInnerHTML={{ __html: MEMO_ICON_SVG }} />
-                    Памятка
-                </span>
-                <span className={cl("memo-version")}>{MEMO_VERSION}</span>
                 <button className={cl("memo-close")} title="Закрыть" aria-label="Закрыть" onClick={close}>
                     <span dangerouslySetInnerHTML={{ __html: CLOSE_ICON_SVG }} />
                 </button>
-            </div>
-            <div className={cl("memo-toolbar")}>
-                <MemoSelect options={MEMO_DOCS} value={memoId} onChange={setMemoId} />
+                <div className={cl("memo-header-main")}>
+                    <span className={cl("memo-title")}>Памятка</span>
+                    <span className={cl("memo-version")}>{MEMO_VERSION}</span>
+                </div>
+                <div className={cl("memo-header-select")} onPointerDown={e => e.stopPropagation()}>
+                    <MemoSelect options={MEMO_DOCS} value={memoId} onChange={setMemoId} />
+                </div>
             </div>
             <div className={cl("memo-body")}>
-                <div className={cl("memo-content")}>
+                <div key={memoId} className={cl("memo-content")}>
                     <MemoBody content={content} />
                 </div>
             </div>
@@ -1266,10 +1162,9 @@ let memoContainer: HTMLDivElement | null = null;
 
 async function openMemoWindow() {
     if (memoRoot) return;
-    const [p, s, sb] = await Promise.all([
+    const [p, s] = await Promise.all([
         DataStore.get<MemoPos>(MEMO_POS_KEY),
-        DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY),
-        DataStore.get<number>(MEMO_SIDEBAR_KEY)
+        DataStore.get<typeof DEFAULT_MEMO_SIZE>(MEMO_SIZE_KEY)
     ]);
     if (memoRoot) return;
     const w = s && Number.isFinite(s.width)
@@ -1289,7 +1184,7 @@ async function openMemoWindow() {
     memoRoot = createRoot(memoContainer);
     memoRoot.render(
         <ErrorBoundary>
-            <MemoWindow onClose={closeMemoWindow} initialPos={{ x, y }} initialSize={{ width: w, height: h }} initialSidebarWidth={sb && Number.isFinite(sb) ? Math.max(120, Math.min(w - 220, sb)) : DEFAULT_SIDEBAR_WIDTH} />
+            <MemoWindow onClose={closeMemoWindow} initialPos={{ x, y }} initialSize={{ width: w, height: h }} />
         </ErrorBoundary>,
     );
 }
@@ -1478,6 +1373,10 @@ export default definePlugin({
         if (settings.store.memoContent && settings.store.memoContent.includes("## Ответы на часто задаваемые вопросы")) {
             settings.store.memoContent = DEFAULT_MEMO;
             showToast("Сапортка: памятка обновлена до новой структуры", Toasts.Type.SUCCESS);
+        }
+        if (settings.store.memoContent?.startsWith("## Основная информация")) {
+            settings.store.memoContent = DEFAULT_MEMO;
+            showToast("Сапортка: памятка обновлена — разделы: Чек-лист, Тикеты, Символика", Toasts.Type.SUCCESS);
         }
         startPolling();
         startMemoButton();

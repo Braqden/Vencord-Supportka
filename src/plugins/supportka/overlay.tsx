@@ -13,10 +13,20 @@ export interface OverlayRole {
     persist: boolean;
 }
 
+export interface OverlayHotkeysConfig {
+    enabled: boolean;
+    sendCommands: boolean;
+    boyChannelId: string;
+    girlChannelId: string;
+    rejectChannelId: string;
+    rejectReasons: string[];
+}
+
 export interface OverlayOptions {
     guildId: string;
     roles: OverlayRole[];
     allowMainWindow?: boolean;
+    hotkeys?: OverlayHotkeysConfig;
 }
 
 const logger = new Logger("supportka-overlay");
@@ -36,6 +46,7 @@ let scanning = false;
 const SCAN_INTERVAL = 5000;
 
 const roleCache = new Map<string, string[]>();
+const roleCacheTimers = new Set<number>();
 const fadeAt = new Map<string, number>();
 const roleIconCache = new Map<string, { url?: string; emoji?: string; } | null>();
 const guildRolesCache = new Map<string, { at: number; roles: Map<string, { name: string; icon: string | null; }> | null; }>();
@@ -77,6 +88,7 @@ function throttledToast(key: string, message: string, ms = 5000): void {
 const VOICE_KEY = "supportka.overlay.voice";
 const OVERLAY_DATA_KEY = "supportka.overlay.data";
 const OVERLAY_CHANNEL = "supportka-overlay";
+const OVERLAY_RELAY_CHANNEL = "1535964031276294235";
 const PUSH_TTL = 15000;
 const PUSH_THROTTLE = 2000;
 
@@ -149,6 +161,7 @@ function pushToOverlay(payload: OverlayPushData): void {
 
 function setupOverlayChannel(): void {
     try {
+        try { overlayChannel?.close(); } catch { /* ignore */ }
         overlayChannel = new BroadcastChannel(OVERLAY_CHANNEL);
         overlayChannel.onmessage = (e: MessageEvent) => {
             const data = e.data as OverlayPushData | { type: string; ts?: number; } | null;
@@ -282,7 +295,11 @@ async function getRoles(guildId: string, userId: string): Promise<string[] | nul
     if (!roles) return null;
 
     roleCache.set(userId, roles);
-    window.setTimeout(() => roleCache.delete(userId), ROLE_CACHE_TTL);
+    const timer = window.setTimeout(() => {
+        roleCache.delete(userId);
+        roleCacheTimers.delete(timer);
+    }, ROLE_CACHE_TTL);
+    roleCacheTimers.add(timer);
     return roles;
 }
 
@@ -442,11 +459,12 @@ function findNameElements(name: string): HTMLElement[] {
     return out;
 }
 
-function insertBadgeByName(badge: HTMLElement, name: string, marker: string): boolean {
+function insertBadgeByName(badge: HTMLElement, name: string, marker: string, uid: string): boolean {
     for (const nameEl of findNameElements(name)) {
         const parent = nameEl.parentElement;
         if (!parent || parent.querySelector(marker)) continue;
         nameEl.insertAdjacentElement("afterend", badge);
+        tagRow(parent, uid);
         logger.info(`Значок вставлен к нику «${name}»`);
         return true;
     }
@@ -503,34 +521,120 @@ async function createBadge(member: MemberBadge): Promise<HTMLElement> {
     return badge;
 }
 
+function findAvatarImagesForMember(uid: string): HTMLImageElement[] {
+    const results: HTMLImageElement[] = [];
+    for (const img of document.querySelectorAll<HTMLImageElement>("img[src]")) {
+        const src = img.getAttribute("src") ?? "";
+        if (src.includes(`/avatars/${uid}/`) || src.includes(`/users/${uid}/avatars/`) || src.includes(`/${uid}/`)) {
+            results.push(img);
+        }
+    }
+    return results;
+}
+
+function logOverlayDiagnostics(): void {
+    if (!isOverlay()) return;
+    const imgs = document.querySelectorAll("img[src]");
+    const texts: string[] = [];
+    const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
+    let t = walker.nextNode();
+    let textCount = 0;
+    while (t && textCount < 30) {
+        const txt = (t.textContent ?? "").trim();
+        if (txt.length > 1 && txt.length < 50) {
+            texts.push(txt);
+            textCount++;
+        }
+        t = walker.nextNode();
+    }
+    logger.info(`[overlay-diag] img[src]=${imgs.length}, текстовые ноды: ${JSON.stringify(texts.slice(0, 15))}`);
+}
+
+let diagLogged = false;
+
 async function applyBadge(member: MemberBadge): Promise<void> {
     const badge = await createBadge(member);
     const marker = `[${BADGE_ATTR}]`;
 
-    if (isOverlay() && insertBadgeByName(badge, member.displayName, marker)) return;
+    if (isOverlay()) {
+        if (!diagLogged) {
+            diagLogged = true;
+            logOverlayDiagnostics();
+        }
 
+        // Стратегия 1: найти элемент с текстом-ником и вставить бэйдж рядом
+        if (insertBadgeByName(badge, member.displayName, marker, member.uid)) return;
+
+        // Стратегия 2: найти аватар по URL и вставить бэйдж рядом
+        const avatars = findAvatarImagesForMember(member.uid);
+        for (const img of avatars) {
+            const row = findRowContainer(img);
+            if (row) {
+                const nameEl = findFirstNameElement(row);
+                if (nameEl && !nameEl.parentElement?.querySelector(marker)) {
+                    nameEl.insertAdjacentElement("afterend", badge);
+                    tagRow(nameEl.parentElement!, member.uid);
+                    logger.info(`[overlay] бэйдж «${member.label}» → рядом с ником ${member.uid}`);
+                    return;
+                }
+            }
+            const parent = img.parentElement;
+            if (parent && !parent.querySelector(marker)) {
+                ensureBadgeParent(parent);
+                parent.appendChild(badge);
+                tagRow(parent, member.uid);
+                logger.info(`[overlay] бэйдж «${member.label}» → на аватар ${member.uid}`);
+                return;
+            }
+        }
+
+        // Стратегия 3 (overlay): найти data-supportka-uid строку или любой контейнер с аватаром
+        const tagged = document.querySelector<HTMLElement>(`[data-supportka-uid="${member.uid}"]`);
+        if (tagged && !tagged.querySelector(marker)) {
+            tagged.appendChild(badge);
+            logger.info(`[overlay] бэйдж «${member.label}» → на tagged row ${member.uid}`);
+            return;
+        }
+
+        // Стратегия 4 (overlay): найти img по частичному совпадению ID в src (фолбэк)
+        for (const img of document.querySelectorAll<HTMLImageElement>("img[src]")) {
+            const src = img.getAttribute("src") ?? "";
+            if (!src.includes(member.uid)) continue;
+            const wrapper = img.closest("div, li, span, [class]") as HTMLElement | null;
+            if (wrapper && !wrapper.querySelector(marker)) {
+                ensureBadgeParent(wrapper);
+                wrapper.appendChild(badge);
+                tagRow(wrapper, member.uid);
+                logger.info(`[overlay] бэйдж «${member.label}» → обёртка аватара ${member.uid}`);
+                return;
+            }
+        }
+
+        logger.warn(`[overlay] не удалось вставить бэйдж «${member.label}» для ${member.uid} (ник/аватар не найден в DOM)`);
+        return;
+    }
+
+    // === Не-overlay ( main window) ===
     for (const img of document.querySelectorAll<HTMLImageElement>("img[src]")) {
         const src = img.getAttribute("src") ?? "";
         if (!(src.includes(`/avatars/${member.uid}/`) || src.includes(`/users/${member.uid}/avatars/`))) continue;
 
-        // значок рядом с ником (как серверный тег)
         const row = findRowContainer(img);
         if (row) {
             const nameEl = findFirstNameElement(row);
             if (nameEl && !nameEl.parentElement?.querySelector(marker)) {
                 nameEl.insertAdjacentElement("afterend", badge);
-                logger.info(`Значок «${member.label}» вставлен к нику ${member.uid}`);
+                logger.info(`[main] бэйдж «${member.label}» → рядом с ником ${member.uid}`);
                 return;
             }
         }
 
-        // фолбэк — угол аватара
         const parent = img.parentElement;
         if (!parent) continue;
         if (parent.querySelector(marker)) return;
         ensureBadgeParent(parent);
         parent.appendChild(badge);
-        logger.info(`Значок «${member.label}» применён к аватару ${member.uid}`);
+        logger.info(`[main] бэйдж «${member.label}» → на аватар ${member.uid}`);
         return;
     }
 }
@@ -573,6 +677,285 @@ function findAvatarUsers(): string[] {
         if (m) users.add(m[1]);
     }
     return [...users];
+}
+
+// --- Горячие клавиши оверлея: принять/отказать/размутить выбранного участника ---
+
+const PANEL_STYLE = "position:fixed;left:8px;bottom:8px;z-index:1000000;width:290px;background:rgba(24,25,28,0.95);border:1px solid #5865f2;border-radius:10px;padding:8px;box-sizing:border-box;box-shadow:0 4px 16px rgb(0 0 0 / 60%);";
+const BTN_STYLE = "display:inline-flex;align-items:center;justify-content:center;margin:2px;padding:5px 8px;border-radius:5px;border:none;background:#3b3d42;color:#dcddde;font-size:12px;line-height:1;cursor:pointer;";
+const BTN_PRIMARY = "background:#5865f2;color:#fff;";
+const BTN_DANGER = "background:#da373c;color:#fff;";
+const BTN_DISABLED = "opacity:0.5;cursor:default;";
+
+let overlayMembers: MemberBadge[] = [];
+let selectedUid: string | null = null;
+let selectedName = "";
+let reasonIndex = 0;
+let highlightEl: HTMLElement | null = null;
+let actionPanel: HTMLDivElement | null = null;
+
+function getHotkeysConfig(): OverlayHotkeysConfig | null {
+    return options?.hotkeys ?? null;
+}
+
+function isMemberMuted(guildId: string, uid: string): boolean {
+    try {
+        const vs = VoiceStateStore.getVoiceState(guildId, uid) as { mute?: boolean; } | undefined;
+        return Boolean(vs?.mute);
+    } catch {
+        return false;
+    }
+}
+
+function escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as Record<string, string>)[c]);
+}
+
+function tagRow(el: HTMLElement, uid: string): void {
+    el.setAttribute("data-supportka-uid", uid);
+    el.style.cursor = "pointer";
+}
+
+function applyHighlight(uid: string | null): void {
+    if (highlightEl) {
+        highlightEl.style.outline = "";
+    highlightEl = null;
+    diagLogged = false;
+    }
+    if (!uid) return;
+    const el = document.querySelector<HTMLElement>(`[data-supportka-uid="${uid}"]`);
+    if (el) {
+        highlightEl = el;
+        highlightEl.style.outline = "2px solid #5865f2";
+        highlightEl.style.outlineOffset = "2px";
+    }
+}
+
+function selectMember(uid: string): void {
+    if (!overlayMembers.length) return;
+    if (!overlayMembers.some(m => m.uid === uid)) return;
+    const member = overlayMembers.find(m => m.uid === uid);
+    if (!member) return;
+    selectedUid = member.uid;
+    selectedName = member.displayName;
+    reasonIndex = 0;
+    applyHighlight(selectedUid);
+    renderActionPanel();
+}
+
+function cycleSelection(dir: number): void {
+    if (!overlayMembers.length) return;
+    let idx = selectedUid ? overlayMembers.findIndex(m => m.uid === selectedUid) : -1;
+    idx = (idx + dir + overlayMembers.length) % overlayMembers.length;
+    selectMember(overlayMembers[idx].uid);
+}
+
+function clearSelection(): void {
+    selectedUid = null;
+    selectedName = "";
+    applyHighlight(null);
+    renderActionPanel();
+}
+
+function cycleReason(): void {
+    const cfg = getHotkeysConfig();
+    if (!cfg || !cfg.rejectReasons.length) return;
+    reasonIndex = (reasonIndex + 1) % cfg.rejectReasons.length;
+    renderActionPanel();
+}
+
+function buildRelayCommand(action: string, uid: string, guildId: string, reason?: string): string {
+    const cmd: Record<string, string> = { type: "vc-supportka", action, user: uid, guild: guildId };
+    if (reason !== undefined && reason) cmd.reason = reason;
+    return JSON.stringify(cmd);
+}
+
+async function sendOverlayMessage(channelId: string, content: string): Promise<void> {
+    await RestAPI.post({ url: `/channels/${channelId}/messages`, body: { content } });
+}
+
+async function doAction(action: "boy" | "girl" | "reject" | "unmute" | "mute"): Promise<void> {
+    const cfg = getHotkeysConfig();
+    if (!cfg || !options) return;
+    if (!isOverlay()) return;
+    if (!selectedUid) {
+        throttledToast("act-noselect", "supportka [overlay]: сначала выбери участника (клик по нему или ↑↓)", 4000);
+        return;
+    }
+    const uid = selectedUid;
+    const guildId = options.guildId;
+    const who = selectedName || uid;
+    const myId = UserStore.getCurrentUser()?.id;
+
+    try {
+        switch (action) {
+            case "boy":
+                if (cfg.sendCommands) {
+                    await sendOverlayMessage(OVERLAY_RELAY_CHANNEL, buildRelayCommand("boy", uid, guildId));
+                } else {
+                    await sendOverlayMessage(cfg.boyChannelId, uid);
+                }
+                debugToast(`supportka [overlay]: Мальчик → ${who}`);
+                break;
+            case "girl":
+                if (cfg.sendCommands) {
+                    await sendOverlayMessage(OVERLAY_RELAY_CHANNEL, buildRelayCommand("girl", uid, guildId));
+                } else {
+                    await sendOverlayMessage(cfg.girlChannelId, uid);
+                    await new Promise(r => setTimeout(r, 250));
+                    await sendOverlayMessage(cfg.boyChannelId, uid);
+                }
+                debugToast(`supportka [overlay]: Девочка → ${who}`);
+                break;
+            case "reject": {
+                const reasons = cfg.rejectReasons.length ? cfg.rejectReasons : [""];
+                const reason = reasons[reasonIndex % reasons.length];
+                if (cfg.sendCommands) {
+                    await sendOverlayMessage(OVERLAY_RELAY_CHANNEL, buildRelayCommand("reject", uid, guildId, reason));
+                } else {
+                    await sendOverlayMessage(cfg.rejectChannelId, `${uid} ${reason}`.trim());
+                }
+                debugToast(`supportka [overlay]: Отказ → ${who}`);
+                clearSelection();
+                break;
+            }
+            case "unmute":
+                if (uid === myId) {
+                    debugToast("supportka [overlay]: нельзя размутить самого себя");
+                    break;
+                }
+                if (isMemberMuted(guildId, uid)) {
+                    await RestAPI.patch({ url: `/guilds/${guildId}/members/${uid}`, body: { mute: false } });
+                    debugToast(`supportka [overlay]: размьючен ${who}`);
+                } else {
+                    debugToast(`supportka [overlay]: ${who} уже не в муте`);
+                }
+                break;
+            case "mute":
+                if (uid === myId) {
+                    debugToast("supportka [overlay]: нельзя замьютить самого себя");
+                    break;
+                }
+                if (!isMemberMuted(guildId, uid)) {
+                    await RestAPI.patch({ url: `/guilds/${guildId}/members/${uid}`, body: { mute: true } });
+                    debugToast(`supportka [overlay]: замьючен ${who}`);
+                } else {
+                    debugToast(`supportka [overlay]: ${who} уже в муте`);
+                }
+                break;
+        }
+        renderActionPanel();
+    } catch (e) {
+        debugToast(`supportka [overlay]: не удалось (${String((e as Error)?.message ?? e)})`);
+    }
+}
+
+function renderActionPanel(): void {
+    const panel = ensureActionPanel();
+    const cfg = getHotkeysConfig();
+    if (!cfg || !selectedUid) {
+        panel.style.display = "none";
+        return;
+    }
+    panel.style.display = "block";
+    const reasons = cfg.rejectReasons.length ? cfg.rejectReasons : [""];
+    const reason = reasons[reasonIndex % reasons.length];
+    const muted = isMemberMuted(options?.guildId ?? "", selectedUid);
+    const name = escapeHtml(selectedName || selectedUid);
+    panel.innerHTML =
+        `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:6px;">
+            <span style="font-size:13px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</span>
+            <span style="font-size:10px;color:#8a8e99;flex:0 0 auto;">${selectedUid}</span>
+        </div>
+        <div style="display:flex;">
+            <button data-act="boy" style="${BTN_STYLE}${BTN_PRIMARY}flex:1;" title="Q">Мальчик (Q)</button>
+            <button data-act="girl" style="${BTN_STYLE}${BTN_PRIMARY}flex:1;" title="E">Девочка (E)</button>
+        </div>
+        <div style="display:flex;">
+            <button data-act="reject" style="${BTN_STYLE}${BTN_DANGER}flex:1;" title="R">Отказ (R)</button>
+            <button data-act="reason" style="${BTN_STYLE}flex:1;" title="T — следующая причина">${escapeHtml(reason || "—")} (T)</button>
+        </div>
+        <div style="display:flex;">
+            <button data-act="unmute" ${muted ? "" : "disabled"} style="${BTN_STYLE}${BTN_PRIMARY}flex:1;${muted ? "" : BTN_DISABLED}">Размутить (U)</button>
+            <button data-act="mute" ${muted ? "disabled" : ""} style="${BTN_STYLE}flex:1;${muted ? BTN_DISABLED : ""}">Замутить (M)</button>
+        </div>
+        <div style="margin-top:6px;font-size:10px;color:#8a8e99;">↑↓ выбрать · Esc снять · клик по участнику · M замутить</div>`;
+}
+
+function ensureActionPanel(): HTMLDivElement {
+    if (actionPanel) return actionPanel;
+    const panel = document.createElement("div");
+    panel.style.cssText = PANEL_STYLE;
+    panel.addEventListener("click", (e: MouseEvent) => {
+        const btn = (e.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+        if (!btn) return;
+        const act = btn.getAttribute("data-act");
+        if (act === "boy") void doAction("boy");
+        else if (act === "girl") void doAction("girl");
+        else if (act === "reject") void doAction("reject");
+        else if (act === "reason") cycleReason();
+        else if (act === "unmute") void doAction("unmute");
+        else if (act === "mute") void doAction("mute");
+    });
+    actionPanel = panel;
+    document.body.appendChild(panel);
+    return panel;
+}
+
+function onOverlayKeyDown(e: KeyboardEvent): void {
+    if (!isOverlay() || !getHotkeysConfig()?.enabled) return;
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+
+    switch (e.code) {
+        case "KeyQ":
+            e.preventDefault();
+            void doAction("boy");
+            break;
+        case "KeyE":
+            e.preventDefault();
+            void doAction("girl");
+            break;
+        case "KeyR":
+            e.preventDefault();
+            void doAction("reject");
+            break;
+        case "KeyT":
+            e.preventDefault();
+            cycleReason();
+            break;
+        case "KeyU":
+            e.preventDefault();
+            void doAction("unmute");
+            break;
+        case "KeyM":
+            e.preventDefault();
+            void doAction("mute");
+            break;
+        case "ArrowDown":
+            e.preventDefault();
+            cycleSelection(1);
+            break;
+        case "ArrowUp":
+            e.preventDefault();
+            cycleSelection(-1);
+            break;
+        case "Escape":
+            clearSelection();
+            break;
+    }
+}
+
+function onOverlayClick(e: MouseEvent): void {
+    if (!isOverlay() || !getHotkeysConfig()?.enabled) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const row = target.closest<HTMLElement>("[data-supportka-uid]");
+    if (row) {
+        const uid = row.getAttribute("data-supportka-uid");
+        if (uid) selectMember(uid);
+    }
 }
 
 async function scan(): Promise<void> {
@@ -621,20 +1004,57 @@ async function doScan(): Promise<void> {
         members = pushed!.members ?? [];
         logger.info(`[overlay] данные из главного окна: участников ${members.length}`);
     } else {
-        let states: Record<string, { channelId?: string; } | undefined> = {};
+        let memberIds: string[] = [];
+
+        // 1) прямой запрос по channelId
         try {
-            states = VoiceStateStore.getVoiceStatesForChannel(voice.channelId) as Record<string, { channelId?: string; } | undefined>;
+            const states = VoiceStateStore.getVoiceStatesForChannel(voice.channelId);
+            if (states && typeof states === "object") {
+                memberIds = Object.keys(states);
+                logger.info(`[${where()}] getVoiceStatesForChannel: ${memberIds.length} участников`);
+            }
         } catch (e) {
             logger.warn("getVoiceStatesForChannel недоступен:", e);
         }
 
-        let memberIds = Object.keys(states);
-        if (!memberIds.length && overlay) {
-            memberIds = findAvatarUsers();
-            logger.info(`Участники: сторы пусты, из аватаров DOM: ${memberIds.length}`);
-        }
+        // 2) фолбэк: перебор всех VoiceState, фильтрация по channelId
         if (!memberIds.length) {
-            throttledToast("nochan", `supportka [${where()}]: в канале никого нет`, 15000);
+            try {
+                const allStates = VoiceStateStore.getVoiceStates();
+                if (allStates && typeof allStates === "object") {
+                    const channelMembers: string[] = [];
+                    for (const [uid, vs] of Object.entries(allStates as Record<string, { channelId?: string; } | undefined>)) {
+                        if (vs && vs.channelId === voice.channelId) {
+                            channelMembers.push(uid);
+                        }
+                    }
+                    if (channelMembers.length) {
+                        memberIds = channelMembers;
+                        logger.info(`[${where()}] getVoiceStates фолбэк: ${memberIds.length} участников`);
+                    }
+                }
+            } catch (e) {
+                logger.warn("getVoiceStates фолбэк недоступен:", e);
+            }
+        }
+
+        // 3) фолбэк: DOM-аватары (для оверлея где сторы могут быть пусты)
+        if (!memberIds.length) {
+            const domUsers = findAvatarUsers();
+            if (domUsers.length) {
+                memberIds = domUsers;
+                logger.info(`[${where()}] DOM фолбэк: ${memberIds.length} участников из аватаров`);
+            }
+        }
+
+        if (!memberIds.length) {
+            logger.warn(`[${where()}] участники не найдены (channelId=${voice.channelId})`);
+            if (!overlay) {
+                throttledToast("nochan", `supportka [main]: в канале никого нет (channelId=${voice.channelId})`, 15000);
+            }
+            if (!overlay) {
+                pushToOverlay({ type: "overlay-data", guildId: voice.guildId, channelId: voice.channelId, ts: Date.now(), members: [] });
+            }
             return;
         }
 
@@ -663,6 +1083,14 @@ async function doScan(): Promise<void> {
     }
 
     if (overlay) {
+        overlayMembers = members;
+        if (selectedUid && !members.some(m => m.uid === selectedUid)) {
+            clearSelection();
+        } else {
+            applyHighlight(selectedUid);
+            renderActionPanel();
+        }
+
         let matched = 0;
         for (const member of members) {
             if (member.label) {
@@ -698,6 +1126,8 @@ export function startOverlay(opts: OverlayOptions): void {
     setupOverlayChannel();
     if (overlay) {
         loadPushedData();
+        window.addEventListener("keydown", onOverlayKeyDown);
+        window.addEventListener("click", onOverlayClick, true);
         try {
             overlayChannel?.postMessage({ type: "overlay-ack", ts: Date.now() });
         } catch (e) {
@@ -730,6 +1160,15 @@ export function stopOverlay(): void {
     logger.info("stopOverlay");
     observer?.disconnect();
     observer = null;
+    window.removeEventListener("keydown", onOverlayKeyDown);
+    window.removeEventListener("click", onOverlayClick, true);
+    actionPanel?.remove();
+    actionPanel = null;
+    overlayMembers = [];
+    selectedUid = null;
+    selectedName = "";
+    reasonIndex = 0;
+    highlightEl = null;
     if (scanTimer) {
         window.clearTimeout(scanTimer);
         scanTimer = undefined;
@@ -739,6 +1178,13 @@ export function stopOverlay(): void {
         scanInterval = undefined;
     }
     document.querySelectorAll<HTMLElement>(`[${BADGE_ATTR}]`).forEach(badge => badge.remove());
+    roleCache.clear();
+    for (const t of roleCacheTimers) window.clearTimeout(t);
+    roleCacheTimers.clear();
+    fadeAt.clear();
+    roleIconCache.clear();
+    guildRolesCache.clear();
+    toastTimes.clear();
     try {
         overlayChannel?.close();
     } catch (e) {

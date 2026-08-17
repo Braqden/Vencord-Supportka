@@ -98,8 +98,8 @@
     min-height: 200px;
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 56px);
-    background: var(--background-tertiary);
-    border: 2px solid var(--background-modifier-active);
+    background: var(--vc-supportka-memo-bg, var(--background-tertiary));
+    border: 2px solid var(--vc-supportka-memo-border, var(--brand-experiment, #5865f2));
     border-radius: 8px;
     box-shadow: var(--elevation-high);
     overflow: hidden;
@@ -140,12 +140,13 @@
 }
 
 .vc-supportka-memo-header {
+    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 8px 8px 8px 14px;
-    background: var(--background-secondary);
+    gap: 2px;
+    padding: 10px 12px 8px;
+    background: var(--vc-supportka-memo-bg-secondary, var(--background-secondary));
     border-bottom: 1px solid var(--background-modifier-accent);
     cursor: move;
     flex: 0 0 auto;
@@ -153,12 +154,19 @@
     touch-action: none;
 }
 
+.vc-supportka-memo-header-main {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+}
+
 .vc-supportka-memo-title {
     display: flex;
     align-items: center;
     gap: 8px;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 15px;
     letter-spacing: 0.2px;
     color: var(--vc-supportka-memo-header, var(--header-primary));
 }
@@ -170,7 +178,6 @@
 }
 
 .vc-supportka-memo-version {
-    margin-left: 8px;
     padding: 1px 6px;
     border-radius: 6px;
     background: var(--background-modifier-hover);
@@ -182,10 +189,19 @@
     user-select: none;
 }
 
+.vc-supportka-memo-header-select {
+    margin-top: 5px;
+    position: relative;
+    z-index: 2;
+}
+
 .vc-supportka-memo-close {
     display: flex;
     align-items: center;
     justify-content: center;
+    position: absolute;
+    top: 6px;
+    right: 6px;
     width: 28px;
     height: 28px;
     border: none;
@@ -208,94 +224,6 @@
     flex-direction: row;
     overflow: hidden;
     user-select: text;
-}
-
-.vc-supportka-memo-sidebar {
-    flex: 0 0 190px;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 8px 6px;
-    background: var(--background-secondary);
-    border-right: 1px solid var(--background-modifier-accent);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thin-thumb) transparent;
-}
-
-.vc-supportka-memo-sidebar::-webkit-scrollbar {
-    width: 8px;
-}
-
-.vc-supportka-memo-sidebar::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.vc-supportka-memo-sidebar::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thin-thumb);
-    border-radius: 4px;
-}
-
-.vc-supportka-memo-sidebar::-webkit-scrollbar-thumb:hover {
-    filter: brightness(1.2);
-}
-
-.vc-supportka-memo-sidebar-resizer {
-    flex: 0 0 6px;
-    cursor: col-resize;
-    user-select: none;
-    -webkit-app-region: no-drag;
-    background: transparent;
-    transition: background-color 0.15s ease;
-}
-
-.vc-supportka-memo-sidebar-resizer:hover {
-    background: var(--background-modifier-hover);
-}
-
-.vc-supportka-memo-sidebar-resizer:active {
-    background: var(--background-modifier-active);
-}
-
-.vc-supportka-memo-nav-item {
-    display: block;
-    width: 100%;
-    padding: 5px 8px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--vc-supportka-memo-interactive, var(--interactive-normal));
-    font-family: var(--font-primary);
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 1.3;
-    text-align: left;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.vc-supportka-memo-nav-item:hover {
-    background: var(--background-modifier-hover);
-    color: var(--vc-supportka-memo-text, var(--text-normal));
-}
-
-.vc-supportka-memo-nav-item.active {
-    background: var(--brand-experiment);
-    color: #fff;
-}
-
-.vc-supportka-memo-nav-item.sub {
-    padding-left: 20px;
-    font-size: 12.5px;
-    color: var(--vc-supportka-memo-interactive-muted, var(--interactive-muted));
-}
-
-.vc-supportka-memo-nav-item.sub:hover {
-    color: var(--vc-supportka-memo-text, var(--text-normal));
 }
 
 .vc-supportka-memo-content {
@@ -325,17 +253,6 @@
     filter: brightness(1.2);
 }
 
-.vc-supportka-memo-toolbar {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    padding: 6px 8px;
-    background: transparent;
-    border-bottom: 1px solid var(--background-modifier-accent);
-    position: relative;
-    z-index: 1;
-}
-
 .vc-supportka-memo-select {
     position: relative;
 }
@@ -344,7 +261,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    min-width: 240px;
+    min-width: 200px;
     padding: 6px 10px;
     border: none;
     border-radius: 8px;
@@ -392,12 +309,12 @@
     top: calc(100% + 4px);
     left: 0;
     z-index: 100;
-    width: 100%;
+    min-width: 240px;
     max-height: 320px;
     overflow-y: auto;
     padding: 4px;
     background: #2b2d31;
-    background: var(--background-secondary);
+    background: var(--vc-supportka-memo-bg-secondary, var(--background-secondary));
     border: 1px solid var(--background-modifier-accent);
     border-radius: 8px;
     box-shadow: var(--elevation-high);
@@ -474,79 +391,6 @@
     color: var(--brand-experiment);
 }
 
-.vc-supportka-memo-section {
-    margin-top: 10px;
-}
-
-.vc-supportka-memo-section-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    margin: 0;
-    padding: 5px 6px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--vc-supportka-memo-header, var(--header-primary));
-    cursor: pointer;
-    text-align: left;
-    transition: background-color 0.15s ease;
-}
-
-.vc-supportka-memo-section-header:hover {
-    background: var(--background-modifier-hover);
-}
-
-.vc-supportka-memo-section-chevron {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 auto;
-    color: var(--vc-supportka-memo-interactive, var(--interactive-normal));
-    transition: transform 0.2s ease, color 0.15s ease;
-}
-
-.vc-supportka-memo-section-chevron.vc-supportka-open {
-    transform: rotate(90deg);
-}
-
-.vc-supportka-memo-section-title {
-    padding-left: 9px;
-    line-height: 1.25;
-    font-size: 15px;
-    font-weight: 800;
-    text-transform: none !important;
-}
-
-.vc-supportka-memo-section-header-2 .vc-supportka-memo-section-title {
-    border-left: 3px solid var(--brand-experiment);
-}
-
-.vc-supportka-memo-section-header-3 .vc-supportka-memo-section-title {
-    border-left: 3px solid var(--status-warning);
-    font-size: 14px;
-    font-weight: 700;
-}
-
-.vc-supportka-memo-section-collapse {
-    display: grid;
-    grid-template-rows: 1fr;
-    transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
-}
-
-.vc-supportka-memo-section-collapse.vc-supportka-closed {
-    grid-template-rows: 0fr;
-    opacity: 0;
-    pointer-events: none;
-}
-
-.vc-supportka-memo-section-body {
-    padding: 4px 0 0 2px;
-    overflow: hidden;
-    min-height: 0;
-}
-
 .vc-supportka-memo-resize-e,
 .vc-supportka-memo-resize-s,
 .vc-supportka-memo-resize-se {
@@ -617,6 +461,14 @@
     text-transform: none !important;
 }
 
+.vc-supportka-memo-h6 {
+    margin: 8px 0 3px !important;
+    color: var(--vc-supportka-memo-text-muted, var(--text-muted));
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: none !important;
+}
+
 .vc-supportka-memo-h2:first-child,
 .vc-supportka-memo-h3:first-child {
     margin-top: 0 !important;
@@ -650,7 +502,7 @@
     margin: 4px 0 8px 18px;
     border-radius: 6px;
     border: 1px solid var(--background-modifier-accent);
-    background: var(--background-secondary);
+    background: var(--vc-supportka-memo-bg-secondary, var(--background-secondary));
     object-fit: contain;
 }
 
@@ -672,11 +524,11 @@
     color: var(--vc-supportka-memo-text-muted, var(--text-muted));
     font-size: 12.5px;
     line-height: 1.5;
-    background: var(--background-secondary);
+    background: var(--vc-supportka-memo-bg-secondary, var(--background-secondary));
 }
 
 .vc-supportka-memo-body code {
-    background: var(--background-modifier-accent);
+    background: var(--vc-supportka-memo-bg-modifier, var(--background-modifier-accent));
     border-radius: 3px;
     padding: 1px 4px;
     font-family: var(--font-code, monospace);
