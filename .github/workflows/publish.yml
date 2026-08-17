@@ -24,10 +24,8 @@ jobs:
 
       - name: Clone Vencord
         run: |
-          git clone --depth 1 https://github.com/Vendicated/Vencord.git vencord
+          git clone --depth 1 --branch v1.15.1 https://github.com/Vendicated/Vencord.git vencord
           cd vencord
-          git fetch --depth 1 origin v1.15.1
-          git checkout v1.15.1
           corepack enable
           pnpm install --frozen-lockfile
 
