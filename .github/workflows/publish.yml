@@ -31,13 +31,17 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
+      - name: Get short commit hash
+        id: hash
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Copy plugin
         run: cp -r src/plugins/supportka vencord/src/plugins/supportka
 
       - name: Build standalone
         env:
           VENCORD_REMOTE: Braqden/Vencord-Supportka
-          VENCORD_HASH: ${{ github.ref_name }}
+          VENCORD_HASH: ${{ steps.hash.outputs.short }}
         run: |
           cd vencord
           pnpm build --standalone
@@ -65,6 +69,7 @@ jobs:
       - name: Create release with assets
         uses: softprops/action-gh-release@v2
         with:
+          name: "${{ github.ref_name }} ${{ steps.hash.outputs.short }}"
           files: |
             vencord/dist/renderer.js
             vencord/dist/renderer.css
