@@ -640,8 +640,8 @@ function renderInline(text: string): JSX.Element {
     let last = 0;
     let m: RegExpExecArray | null;
     let key = 0;
-    INLINE_RE.lastIndex = 0;
-    while ((m = INLINE_RE.exec(text))) {
+    const re = new RegExp(INLINE_RE);
+    while ((m = re.exec(text))) {
         if (m.index > last) parts.push(<span key={key++}>{text.slice(last, m.index)}</span>);
         const [full, code, linkText, linkUrl, bold, italic, underline, strike] = m;
         if (code !== undefined) {
