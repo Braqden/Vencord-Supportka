@@ -42,6 +42,7 @@ let observer: MutationObserver | null = null;
 let scanTimer: number | undefined;
 let scanInterval: number | undefined;
 let scanning = false;
+let onStorage: ((e: StorageEvent) => void) | null = null;
 
 const SCAN_INTERVAL = 5000;
 
@@ -1133,12 +1134,13 @@ export function startOverlay(opts: OverlayOptions): void {
         } catch (e) {
             logger.warn("ack не отправлен:", e);
         }
-        window.addEventListener("storage", e => {
+        onStorage = (e: StorageEvent) => {
             if (e.key === VOICE_KEY || e.key === OVERLAY_DATA_KEY) {
                 if (e.key === OVERLAY_DATA_KEY) loadPushedData();
                 scheduleScan();
             }
-        });
+        };
+        window.addEventListener("storage", onStorage);
     }
     observer = new MutationObserver(scheduleScan);
     observer.observe(document.body ?? document.documentElement, {
@@ -1162,6 +1164,10 @@ export function stopOverlay(): void {
     observer = null;
     window.removeEventListener("keydown", onOverlayKeyDown);
     window.removeEventListener("click", onOverlayClick, true);
+    if (onStorage) {
+        window.removeEventListener("storage", onStorage);
+        onStorage = null;
+    }
     actionPanel?.remove();
     actionPanel = null;
     overlayMembers = [];

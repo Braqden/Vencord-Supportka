@@ -544,3 +544,47 @@
 .vc-supportka-memo-body a:hover {
     text-decoration: underline;
 }
+
+.vc-supportka-memo-section {
+    margin: 4px 0;
+}
+
+.vc-supportka-memo-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 9px;
+    margin: 16px 0 6px;
+    border: none;
+    border-left: 3px solid var(--brand-experiment);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vc-supportka-memo-header, var(--header-primary));
+    font-family: var(--font-primary);
+    font-size: 15px;
+    font-weight: 800;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.vc-supportka-memo-section-header:first-child {
+    margin-top: 0;
+}
+
+.vc-supportka-memo-section-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.vc-supportka-memo-section-chevron {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    color: var(--vc-supportka-memo-interactive-muted, var(--interactive-muted));
+    transition: transform 0.15s ease;
+}
+
+.vc-supportka-memo-section-body {
+    padding-left: 12px;
+}

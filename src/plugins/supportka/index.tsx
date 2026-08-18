@@ -30,7 +30,7 @@ const DEFAULT_REJECT_CHANNEL = "852418435031498752";
 
 const DEFAULT_RELAY_GUILD_ID = "1535963962053632120";
 
-const MEMO_VERSION = "v3.4.0";
+const MEMO_VERSION = "v3.5.0";
 const DEFAULT_RELAY_CHANNEL_ID = "1535964031276294235";
 const DEFAULT_CONTROLLER_ID = "611522379776000001";
 
@@ -402,10 +402,13 @@ function openRejectModal(userId: string, guildId: string, controller: boolean) {
 function RejectModal({ modalProps, userId, guildId, controller }: { modalProps: RenderModalProps; userId: string; guildId: string; controller: boolean; }) {
     const [reason, setReason] = useState("");
 
-    const presets = settings.store.rejectPresets
-        .split(";")
-        .map(p => p.trim())
-        .filter(Boolean);
+    const presets = useMemo(() =>
+        settings.store.rejectPresets
+            .split(";")
+            .map(p => p.trim())
+            .filter(Boolean),
+        [settings.store.rejectPresets]
+    );
 
     const trimmed = reason.trim();
 
@@ -546,12 +549,12 @@ const SupportkaButtons = ErrorBoundary.wrap(
         };
 
         return (
-            <Flex flexDirection="column" gap={6} style={{ padding: "4px 0 0" }}>
+            <Flex flexDirection="column" gap={6} style={STYLE_COLUMN}>
                 <Button
                     variant="secondary"
                     size="small"
                     className={cl("btn")}
-                    style={{ width: "100%" }}
+                    style={STYLE_FULL_WIDTH}
                     onClick={onMute}
                     disabled={!inVoice}
                 >
@@ -563,7 +566,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
                         variant="secondary"
                         size="small"
                         className={cl("boy", "btn")}
-                        style={{ flex: 1 }}
+                        style={STYLE_FLEX_1}
                         onClick={onBoy}
                     >
                         <PersonIcon />
@@ -573,7 +576,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
                         variant="secondary"
                         size="small"
                         className={cl("girl", "btn")}
-                        style={{ flex: 1 }}
+                        style={STYLE_FLEX_1}
                         onClick={onGirl}
                     >
                         <PersonIcon />
@@ -584,7 +587,7 @@ const SupportkaButtons = ErrorBoundary.wrap(
                     variant="secondary"
                     size="small"
                     className={cl("reject", "btn")}
-                    style={{ width: "100%" }}
+                    style={STYLE_FULL_WIDTH}
                     onClick={onReject}
                 >
                     <RejectIcon />
@@ -596,6 +599,9 @@ const SupportkaButtons = ErrorBoundary.wrap(
     { noop: true }
 );
 
+const STYLE_COLUMN = { padding: "4px 0 0" } as const;
+const STYLE_FULL_WIDTH = { width: "100%" } as const;
+const STYLE_FLEX_1 = { flex: 1 } as const;
 // --- Памятка: плавающее перетаскиваемое окно ---
 
 interface MemoPos {
@@ -618,17 +624,24 @@ const SHIELD_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="n
 
 const CHEVRONS_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>';
 
+const CHEVRON_DOWN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+const CHEVRON_RIGHT_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
+
 const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 
 const INLINE_RE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*|__([^_]+)__|~~([^~]+)~~/g;
+
+const HOISTED_BULLET_RE = /^\*\*([^*]+)\*\*/;
+const HOISTED_NUM_RE = /^(\d+)\.\s+(.*)$/;
 
 function renderInline(text: string): JSX.Element {
     const parts: JSX.Element[] = [];
     let last = 0;
     let m: RegExpExecArray | null;
     let key = 0;
-    const re = new RegExp(INLINE_RE);
-    while ((m = re.exec(text))) {
+    INLINE_RE.lastIndex = 0;
+    while ((m = INLINE_RE.exec(text))) {
         if (m.index > last) parts.push(<span key={key++}>{text.slice(last, m.index)}</span>);
         const [full, code, linkText, linkUrl, bold, italic, underline, strike] = m;
         if (code !== undefined) {
@@ -717,7 +730,7 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
         }
         if (line.startsWith("- ")) {
             const content = line.slice(2);
-            const bold = content.match(/^\*\*([^*]+)\*\*/);
+            const bold = content.match(HOISTED_BULLET_RE);
             const symbol = bold?.[1];
             const img = symbol ? getSymbolImage(symbol) : undefined;
             nodes.push(
@@ -728,7 +741,7 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
             );
             return;
         }
-        const num = line.match(/^(\d+)\.\s+(.*)$/);
+        const num = line.match(HOISTED_NUM_RE);
         if (num) {
             nodes.push(<div key={i} className={cl("memo-li")}><span className={cl("memo-bullet")}>{num[1]}.</span>{renderInline(num[2])}</div>);
             return;
@@ -746,18 +759,40 @@ function renderMemoLines(lines: string[]): JSX.Element[] {
     return nodes;
 }
 
-function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: string): JSX.Element[] {
+function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: string, collapsed: Set<number>, toggle: (id: number) => void): JSX.Element[] {
     const nodes: JSX.Element[] = [];
     items.forEach((item, i) => {
+        const id = baseKey ? baseKey.charCodeAt(0) * 31 + i : i;
         if (Array.isArray(item)) {
             nodes.push(<div key={`${baseKey}-t${i}`}>{renderMemoLines(item)}</div>);
+        } else if (item.level === 2) {
+            const isOpen = !collapsed.has(id);
+            nodes.push(
+                <div key={`${baseKey}-s${i}`} className={cl("memo-section")}>
+                    <button
+                        className={cl("memo-section-header")}
+                        onClick={() => toggle(id)}
+                    >
+                        <span
+                            className={cl("memo-section-chevron", isOpen ? "open" : "")}
+                            dangerouslySetInnerHTML={{ __html: isOpen ? CHEVRON_DOWN_SVG : CHEVRON_RIGHT_SVG }}
+                        />
+                        {renderInline(item.title)}
+                    </button>
+                    {isOpen && (
+                        <div className={cl("memo-section-body")}>
+                            {renderMemoItems(item.items, `${baseKey}-s${i}`, collapsed, toggle)}
+                        </div>
+                    )}
+                </div>
+            );
         } else {
-            const Tag = item.level === 2 ? "h3" : "h4";
-            const styleClass = item.level === 2 ? cl("memo-h2") : cl("memo-h3");
+            const Tag = "h4";
+            const styleClass = cl("memo-h3");
             nodes.push(
                 <div key={`${baseKey}-s${i}`} className={cl("memo-sec")}>
                     <Tag className={styleClass}>{renderInline(item.title)}</Tag>
-                    {renderMemoItems(item.items, `${baseKey}-s${i}`)}
+                    {renderMemoItems(item.items, `${baseKey}-s${i}`, collapsed, toggle)}
                 </div>
             );
         }
@@ -765,8 +800,32 @@ function renderMemoItems(items: Array<MemoSectionNode | string[]>, baseKey: stri
     return nodes;
 }
 
+function collectLevel2Ids(items: Array<MemoSectionNode | string[]>, baseKey: string): number[] {
+    const ids: number[] = [];
+    items.forEach((item, i) => {
+        const id = baseKey ? baseKey.charCodeAt(0) * 31 + i : i;
+        if (!Array.isArray(item) && item.level === 2) {
+            ids.push(id);
+        }
+    });
+    return ids;
+}
+
 function MemoBody({ content }: { content: string }) {
-    const nodes = useMemo(() => renderMemoItems(parseMemo(content), "memo"), [content]);
+    const parsed = useMemo(() => parseMemo(content), [content]);
+    const [collapsed, setCollapsed] = useState<Set<number>>(() => {
+        const ids = collectLevel2Ids(parsed, "memo");
+        return new Set(ids);
+    });
+    const toggle = useCallback((id: number) => {
+        setCollapsed(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+    const nodes = useMemo(() => renderMemoItems(parsed, "memo", collapsed, toggle), [parsed, collapsed, toggle]);
     return <>{nodes}</>;
 }
 
